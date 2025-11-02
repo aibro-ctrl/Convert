@@ -15,6 +15,9 @@ import { User as UserIcon, Shield, Crown, Star, Ban, Volume2, VolumeX, ArrowLeft
 import { ProfileSettings } from './ProfileSettings';
 import { NotificationsPanel } from './NotificationsPanel';
 import { compressImage } from '../../utils/imageCompression';
+import { AchievementsPanel } from './AchievementsPanel';
+import { ACHIEVEMENTS, UserAchievementData } from '../../utils/achievements';
+import { fetchAPI } from '../../utils/api';
 
 interface UserProfileProps {
   userId?: string; // Если указан, показываем профиль другого пользователя
@@ -43,6 +46,8 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
   const [showAvatarModal, setShowAvatarModal] = useState(false);
   const [avatarModalUrl, setAvatarModalUrl] = useState<string | null>(null);
   const [showAvatarMenu, setShowAvatarMenu] = useState(false);
+  const [achievementData, setAchievementData] = useState<UserAchievementData | null>(null);
+  const [showAllAchievements, setShowAllAchievements] = useState(false);
   
   // Moderation states
   const [showMuteDialog, setShowMuteDialog] = useState(false);
@@ -63,6 +68,7 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
   useEffect(() => {
     if (userId && userId !== user?.id) {
       loadUserProfile(userId);
+      loadAchievements(userId);
       
       // Обновляем профиль каждые 2 секунды для real-time статуса друзей
       const interval = setInterval(() => {
@@ -70,8 +76,11 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
       }, 2000);
       
       return () => clearInterval(interval);
+    } else if (user && !userId) {
+      // Загружаем достижения для своего профиля
+      loadAchievements(user.id);
     }
-  }, [userId]);
+  }, [userId, user?.id]);
 
   // Закрыть меню аватара при клике вне его
   useEffect(() => {
@@ -132,6 +141,15 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
       if (error.message !== 'Request failed') {
         console.error('Notification error details:', error);
       }
+    }
+  };
+
+  const loadAchievements = async (targetUserId: string) => {
+    try {
+      const data = await fetchAPI(`/achievements/${targetUserId}`);
+      setAchievementData(data);
+    } catch (error) {
+      console.error('Error loading achievements:', error);
     }
   };
 
@@ -507,6 +525,21 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
     return (friend as any)?.avatar;
   };
 
+  // Получить последние 5 разблокированных достижений
+  const getLatestAchievements = () => {
+    if (!achievementData) return [];
+    
+    const unlockedAchievements = Object.values(achievementData.achievements)
+      .filter(a => a.isUnlocked && a.unlockedAt)
+      .sort((a, b) => new Date(b.unlockedAt!).getTime() - new Date(a.unlockedAt!).getTime())
+      .slice(0, 5);
+
+    return unlockedAchievements.map(ua => {
+      const achievement = ACHIEVEMENTS.find(a => a.id === ua.achievementId);
+      return achievement;
+    }).filter(Boolean);
+  };
+
   const handleAvatarChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -637,6 +670,31 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
                       return <Badge variant="outline">{timeText}</Badge>;
                     })()}
                   </div>
+                  
+                  {/* Последние 5 достижений */}
+                  {getLatestAchievements().length > 0 && (
+                    <div className="mt-3">
+                      <div 
+                        className="flex items-center justify-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+                        onClick={() => setShowAllAchievements(true)}
+                        title="Нажмите, чтобы увидеть все достижения"
+                      >
+                        {getLatestAchievements().map((achievement: any) => (
+                          <div 
+                            key={achievement.id}
+                            className="text-2xl"
+                            title={achievement.name}
+                          >
+                            {achievement.icon}
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Последние достижения (нажмите для просмотра всех)
+                      </p>
+                    </div>
+                  )}
+                  
                   {canShowEmail && (
                     <p className="text-sm text-muted-foreground">{viewedUser.email}</p>
                   )}
@@ -945,6 +1003,18 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
             </div>
           </DialogContent>
         </Dialog>
+        
+        {/* Модальное окно всех достижений */}
+        <Dialog open={showAllAchievements} onOpenChange={setShowAllAchievements}>
+          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Достижения пользователя</DialogTitle>
+            </DialogHeader>
+            <div className="py-4">
+              <AchievementsPanel userId={viewedUser.id} />
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
@@ -1226,10 +1296,14 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
   return (
     <div className="h-full flex flex-col">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-        <TabsList className="w-full grid grid-cols-2">
+        <TabsList className="w-full grid grid-cols-3">
           <TabsTrigger value="profile">
             <UserIcon className="w-4 h-4 mr-2" />
             Профиль
+          </TabsTrigger>
+          <TabsTrigger value="achievements">
+            <Star className="w-4 h-4 mr-2" />
+            Ачивки
           </TabsTrigger>
           <TabsTrigger value="settings">
             <Settings className="w-4 h-4 mr-2" />
@@ -1308,6 +1382,30 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
                     {getRoleIcon(user.role)}
                     {getRoleLabel(user.role)}
                   </Badge>
+                  
+                  {/* Последние 5 достижений */}
+                  {getLatestAchievements().length > 0 && (
+                    <div className="mt-3">
+                      <div 
+                        className="flex items-center justify-center gap-2 cursor-pointer hover:opacity-80 transition-opacity"
+                        onClick={() => setShowAllAchievements(true)}
+                        title="Нажмите, чтобы увидеть все достижения"
+                      >
+                        {getLatestAchievements().map((achievement: any) => (
+                          <div 
+                            key={achievement.id}
+                            className="text-2xl"
+                            title={achievement.name}
+                          >
+                            {achievement.icon}
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Последние достижения (нажмите для просмотра всех)
+                      </p>
+                    </div>
+                  )}
                 </div>
               </CardHeader>
             </Card>
@@ -1383,6 +1481,10 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
             </Card>
           </TabsContent>
 
+          <TabsContent value="achievements" className="m-0 p-6">
+            <AchievementsPanel userId={user.id} />
+          </TabsContent>
+
           <TabsContent value="settings" className="m-0 h-full">
             <ProfileSettings />
           </TabsContent>
@@ -1406,6 +1508,20 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
           </div>
         </DialogContent>
       </Dialog>
+      
+      {/* Модальное окно всех достижений */}
+      {user && (
+        <Dialog open={showAllAchievements} onOpenChange={setShowAllAchievements}>
+          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Мои достижения</DialogTitle>
+            </DialogHeader>
+            <div className="py-4">
+              <AchievementsPanel userId={user.id} />
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

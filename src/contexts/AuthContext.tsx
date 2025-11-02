@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, authAPI } from '../utils/api';
+import { isTokenExpired, clearStoragePreservingSettings } from '../utils/tokenUtils';
 
 interface AuthContextType {
   user: User | null;
@@ -45,45 +46,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const token = localStorage.getItem('access_token');
       console.log('AuthContext: Token in localStorage:', token ? token.substring(0, 20) + '...' : 'null');
       
-      // Pre-check: validate token format
+      // Pre-check: validate token format and expiry
       if (token) {
-        try {
-          // Try to parse JWT to check if it's valid format
-          const parts = token.split('.');
-          if (parts.length !== 3) {
-            console.log('AuthContext: Invalid JWT format - clearing immediately');
-            localStorage.clear();
-            setUser(null);
-            setLoading(false);
-            return;
-          }
-          
-          // Try to decode payload to check for sub claim
-          const payload = JSON.parse(atob(parts[1]));
-          console.log('AuthContext: Token payload:', { sub: payload.sub, exp: payload.exp, iat: payload.iat });
-          
-          if (!payload.sub) {
-            console.log('AuthContext: Missing sub claim - clearing immediately');
-            localStorage.clear();
-            setUser(null);
-            setLoading(false);
-            return;
-          }
-          
-          // Check if token is expired
-          if (payload.exp && payload.exp * 1000 < Date.now()) {
-            console.log('AuthContext: Token expired - clearing immediately');
-            localStorage.clear();
-            setUser(null);
-            setLoading(false);
-            return;
-          }
-        } catch (e) {
-          console.log('AuthContext: Cannot parse JWT - clearing immediately', e);
-          localStorage.clear();
+        // Use the centralized token validation
+        if (isTokenExpired(token, 0)) {
+          console.log('AuthContext: Token is expired - clearing immediately');
+          clearStoragePreservingSettings();
           setUser(null);
           setLoading(false);
           return;
+        }
+        
+        // Log token info for debugging
+        try {
+          const payload = JSON.parse(atob(token.split('.')[1]));
+          if (payload.exp) {
+            const expDate = new Date(payload.exp * 1000);
+            const now = new Date();
+            const minutesUntilExpiry = Math.floor((expDate.getTime() - now.getTime()) / 1000 / 60);
+            console.log(`AuthContext: Token is valid, expires in ${minutesUntilExpiry} minutes (at ${expDate.toISOString()})`);
+          }
+        } catch (e) {
+          console.error('AuthContext: Error parsing token for logging:', e);
         }
       }
       
@@ -104,15 +88,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           } else if (error.message?.includes('invalid claim') || 
               error.message?.includes('Invalid token') || 
               error.message?.includes('missing sub') ||
+              error.message?.includes('expired') ||
               error.message?.includes('Недействительный токен')) {
             console.log('AuthContext: Invalid token detected - clearing localStorage');
-            // Сохраняем тему перед очисткой
-            const savedTheme = localStorage.getItem('app-theme');
-            localStorage.clear(); // Clear all localStorage including any corrupted data
-            // Восстанавливаем тему
-            if (savedTheme) {
-              localStorage.setItem('app-theme', savedTheme);
-            }
+            clearStoragePreservingSettings();
             setUser(null);
           } else {
             // For other errors, just remove the token
@@ -132,13 +111,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (error: any) {
       console.error('Auth check failed:', error);
       console.log('AuthContext: Clearing localStorage due to error');
-      // Сохраняем тему перед очисткой
-      const savedTheme = localStorage.getItem('app-theme');
-      localStorage.clear();
-      // Восстанавливаем тему
-      if (savedTheme) {
-        localStorage.setItem('app-theme', savedTheme);
-      }
+      clearStoragePreservingSettings();
       setUser(null);
     } finally {
       console.log('AuthContext: checkAuth completed, loading set to false');
@@ -195,20 +168,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signout = async () => {
-    console.log('AuthContext: Signing out, clearing localStorage');
+    console.log('AuthContext: Signing out');
     try {
       await authAPI.signout(); // Отправляем запрос на сервер для обновления статуса
     } catch (error) {
       console.error('Signout error:', error);
     }
-    // Сохраняем тему перед очисткой
-    const savedTheme = localStorage.getItem('app-theme');
-    // Clear all localStorage data
-    localStorage.clear();
-    // Восстанавливаем тему
-    if (savedTheme) {
-      localStorage.setItem('app-theme', savedTheme);
-    }
+    // Clear all localStorage data while preserving theme
+    clearStoragePreservingSettings();
     setGodModeEnabled(false);
     setUser(null);
     // Force page reload to ensure complete logout

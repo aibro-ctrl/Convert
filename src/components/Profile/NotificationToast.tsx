@@ -2,24 +2,26 @@ import React, { useState, useEffect } from 'react';
 import { Button } from '../ui/button';
 import { Card, CardContent } from '../ui/card';
 import { User as UserIcon, X, MessageCircle, UserPlus } from '../ui/icons';
-import { User, Room } from '../../utils/api';
+import { User, Room, DirectMessage } from '../../utils/api';
 
 interface ToastNotification {
   id: string;
-  type: 'message' | 'friend_request';
+  type: 'message' | 'dm' | 'friend_request';
   from: User;
   content?: string;
   room?: Room;
+  dm?: DirectMessage;
   timestamp: number;
 }
 
 interface NotificationToastProps {
   onOpenChat?: (room: Room) => void;
+  onOpenDM?: (dm: DirectMessage) => void;
   onOpenFriendRequests?: () => void;
   currentUserId: string;
 }
 
-export function NotificationToast({ onOpenChat, onOpenFriendRequests, currentUserId }: NotificationToastProps) {
+export function NotificationToast({ onOpenChat, onOpenDM, onOpenFriendRequests, currentUserId }: NotificationToastProps) {
   const [notifications, setNotifications] = useState<ToastNotification[]>([]);
 
   const addNotification = (notification: Omit<ToastNotification, 'id' | 'timestamp'>) => {
@@ -55,114 +57,184 @@ export function NotificationToast({ onOpenChat, onOpenFriendRequests, currentUse
   const handleClick = (notification: ToastNotification) => {
     if (notification.type === 'message' && notification.room && onOpenChat) {
       onOpenChat(notification.room);
+    } else if (notification.type === 'dm' && notification.dm && onOpenDM) {
+      onOpenDM(notification.dm);
     } else if (notification.type === 'friend_request' && onOpenFriendRequests) {
       onOpenFriendRequests();
     }
     removeNotification(notification.id);
   };
 
+  const getNotificationColor = (type: string) => {
+    switch (type) {
+      case 'dm':
+      case 'message':
+        return '#3b82f6'; // blue
+      case 'friend_request':
+        return '#10b981'; // green
+      default:
+        return '#6366f1'; // indigo
+    }
+  };
+
   return (
     <>
       <style>{`
-        @keyframes slideInUp {
+        @keyframes slideInRight {
           from {
             opacity: 0;
-            transform: translateY(20px) scale(0.95);
+            transform: translateX(100%) scale(0.95);
           }
           to {
             opacity: 1;
-            transform: translateY(0) scale(1);
+            transform: translateX(0) scale(1);
           }
         }
-        @keyframes slideOutDown {
+        @keyframes slideOutRight {
           from {
             opacity: 1;
-            transform: translateY(0) scale(1);
+            transform: translateX(0) scale(1);
           }
           to {
             opacity: 0;
-            transform: translateY(10px) scale(0.95);
+            transform: translateX(100%) scale(0.95);
+          }
+        }
+        @keyframes pulse-ring {
+          0%, 100% {
+            transform: scale(1);
+            opacity: 0.3;
+          }
+          50% {
+            transform: scale(1.1);
+            opacity: 0.1;
           }
         }
         .toast-enter {
-          animation: slideInUp 0.3s ease-out;
+          animation: slideInRight 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
         .toast-exit {
-          animation: slideOutDown 0.2s ease-in;
+          animation: slideOutRight 0.3s ease-in;
         }
       `}</style>
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
-        {notifications.map((notification) => (
-          <div
-            key={notification.id}
-            className="toast-enter"
-          >
-            <Card className="shadow-lg border-2 bg-background">
-              <CardContent className="p-4">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden flex-shrink-0">
-                    {(notification.from as any).avatar ? (
-                      <img 
-                        src={(notification.from as any).avatar} 
-                        alt={notification.from.username} 
-                        className="w-full h-full object-cover" 
+      <div className="fixed top-4 right-4 z-50 flex flex-col gap-3 max-w-md">
+        {notifications.map((notification) => {
+          const color = getNotificationColor(notification.type);
+          return (
+            <div
+              key={notification.id}
+              className="toast-enter"
+            >
+              <div
+                className="relative overflow-hidden rounded-xl shadow-2xl backdrop-blur-md"
+                style={{
+                  background: `linear-gradient(135deg, ${color}15, ${color}25)`,
+                  border: `2px solid ${color}`,
+                }}
+              >
+                {/* Анимированный фон */}
+                <div
+                  className="absolute inset-0 opacity-20"
+                  style={{
+                    background: `radial-gradient(circle at 30% 50%, ${color}, transparent)`,
+                    animation: 'pulse-ring 2s ease-in-out infinite',
+                  }}
+                />
+
+                {/* Контент */}
+                <div className="relative p-4">
+                  <div className="flex items-start gap-3">
+                    {/* Аватар с кольцом */}
+                    <div className="relative flex-shrink-0">
+                      <div
+                        className="absolute inset-0 rounded-full blur-sm"
+                        style={{
+                          background: color,
+                          animation: 'pulse-ring 2s ease-in-out infinite',
+                        }}
                       />
-                    ) : (
-                      <UserIcon className="w-5 h-5" />
-                    )}
-                  </div>
-                  
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-1">
-                      <p className="font-semibold text-sm">
-                        {(notification.from as any).display_name || notification.from.username}
-                      </p>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 -mr-2 -mt-1"
-                        onClick={() => removeNotification(notification.id)}
+                      <div className="relative w-12 h-12 rounded-full bg-background/80 flex items-center justify-center overflow-hidden border-2"
+                        style={{ borderColor: color }}
                       >
-                        <X className="w-4 h-4" />
-                      </Button>
+                        {(notification.from as any).avatar ? (
+                          <img 
+                            src={(notification.from as any).avatar} 
+                            alt={notification.from.username} 
+                            className="w-full h-full object-cover" 
+                          />
+                        ) : (
+                          <UserIcon className="w-6 h-6" style={{ color }} />
+                        )}
+                      </div>
                     </div>
                     
-                    {notification.type === 'message' ? (
-                      <>
-                        <p className="text-sm text-muted-foreground mb-2 truncate">
-                          <MessageCircle className="w-3 h-3 inline mr-1" />
+                    {/* Текст */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2 mb-1">
+                        <div>
+                          <p className="text-sm opacity-60 mb-0.5">
+                            {notification.type === 'dm' || notification.type === 'message' 
+                              ? '💬 Новое сообщение' 
+                              : '👥 Заявка в друзья'}
+                          </p>
+                          <p className="font-semibold">
+                            {(notification.from as any).display_name || notification.from.username}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => removeNotification(notification.id)}
+                          className="flex-shrink-0 p-1 rounded-lg hover:bg-white/20 transition-colors"
+                          aria-label="Закрыть"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      
+                      {(notification.type === 'dm' || notification.type === 'message') && notification.content ? (
+                        <p className="text-sm opacity-80 mb-3 line-clamp-2">
                           {notification.content}
                         </p>
-                        <Button
-                          size="sm"
-                          onClick={() => handleClick(notification)}
-                          className="w-full"
-                        >
-                          Открыть чат
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-sm text-muted-foreground mb-2">
-                          <UserPlus className="w-3 h-3 inline mr-1" />
+                      ) : notification.type === 'friend_request' ? (
+                        <p className="text-sm opacity-80 mb-3">
                           Хочет добавить вас в друзья
                         </p>
-                        <Button
-                          size="sm"
-                          onClick={() => handleClick(notification)}
-                          className="w-full"
-                        >
-                          Открыть запросы
-                        </Button>
-                      </>
-                    )}
+                      ) : null}
+                      
+                      <button
+                        onClick={() => handleClick(notification)}
+                        className="w-full px-4 py-2 rounded-lg text-sm transition-all hover:scale-105 active:scale-95"
+                        style={{
+                          backgroundColor: color,
+                          color: 'white',
+                          fontWeight: 500,
+                        }}
+                      >
+                        {notification.type === 'friend_request' ? 'Открыть запросы' : 'Посмотреть'}
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-          </div>
-        ))}
+
+                {/* Прогресс бар автозакрытия */}
+                <div 
+                  className="absolute bottom-0 left-0 h-1 rounded-b"
+                  style={{
+                    backgroundColor: color,
+                    animation: 'progress 5s linear',
+                    transformOrigin: 'left',
+                  }}
+                />
+              </div>
+            </div>
+          );
+        })}
       </div>
+      <style>{`
+        @keyframes progress {
+          from { width: 100%; }
+          to { width: 0%; }
+        }
+      `}</style>
     </>
   );
 }

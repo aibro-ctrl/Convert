@@ -9,6 +9,7 @@ import * as messages from "./messages.tsx";
 import * as notifications from "./notifications.tsx";
 import * as storage from "./storage.tsx";
 import * as directMessages from "./direct_messages.tsx";
+import achievementsApp from "./achievements.tsx";
 
 const app = new Hono();
 
@@ -2287,5 +2288,8 @@ storage.initializeStorage().catch(err => {
 initializeSystemRooms().catch(err => {
   console.error('Failed to initialize system rooms (non-fatal):', err);
 });
+
+// Mount achievements routes
+app.route('/', achievementsApp);
 
 Deno.serve(app.fetch);

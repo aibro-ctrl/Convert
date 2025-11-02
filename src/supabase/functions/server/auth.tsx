@@ -196,12 +196,13 @@ export async function getUserFromToken(token: string) {
         return null;
       }
       
-      // Check if token is expired
+      // Check if token is expired - CRITICAL: Don't make API call if expired!
       if (payload.exp && payload.exp * 1000 < Date.now()) {
         const expDate = new Date(payload.exp * 1000);
         const now = new Date();
         console.error('getUserFromToken: Token expired at', expDate, 'Current time:', now, 'Expired', Math.floor((now.getTime() - expDate.getTime()) / 1000 / 60), 'minutes ago');
-        return null;
+        console.log('getUserFromToken: Skipping Supabase API call for expired token');
+        return null; // Return early - don't waste API calls!
       } else if (payload.exp) {
         const expDate = new Date(payload.exp * 1000);
         const now = new Date();
@@ -227,20 +228,41 @@ export async function getUserFromToken(token: string) {
     );
     
     console.log('getUserFromToken: Calling Supabase getUser()...');
-    const { data: { user }, error } = await supabaseUser.auth.getUser();
     
-    if (error) {
-      console.error('getUserFromToken: Supabase validation error:', error.message);
-      return null;
-    }
+    // Add retry logic for network errors
+    let retries = 0;
+    const maxRetries = 3;
+    let lastError: any = null;
     
-    if (!user) {
-      console.error('getUserFromToken: No user returned from Supabase');
-      return null;
-    }
+    while (retries < maxRetries) {
+      try {
+        const { data: { user }, error } = await supabaseUser.auth.getUser();
+    
+        if (error) {
+          // Check if it's a network error that we should retry
+          const errorMsg = error.message || '';
+          if (errorMsg.includes('connection reset') || errorMsg.includes('network') || errorMsg.includes('ECONNRESET')) {
+            lastError = error;
+            retries++;
+            if (retries < maxRetries) {
+              const delay = Math.min(1000 * Math.pow(2, retries), 5000); // Exponential backoff, max 5s
+              console.log(`getUserFromToken: Network error, retrying (${retries}/${maxRetries}) after ${delay}ms...`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+              continue; // Try again
+            }
+          }
+          
+          console.error('getUserFromToken: Supabase validation error:', error.message);
+          return null;
+        }
+    
+        if (!user) {
+          console.error('getUserFromToken: No user returned from Supabase');
+          return null;
+        }
 
-    console.log('getUserFromToken: Supabase user validated:', user.id);
-    console.log('getUserFromToken: Fetching user data from KV store...');
+        console.log('getUserFromToken: Supabase user validated:', user.id);
+        console.log('getUserFromToken: Fetching user data from KV store...');
     
     const userData = await kv.get(`user:${user.id}`) as User;
     
@@ -276,8 +298,32 @@ export async function getUserFromToken(token: string) {
       }
     }
     
-    console.log('getUserFromToken: User data found:', userData.username);
-    return userData;
+        console.log('getUserFromToken: User data found:', userData.username);
+        return userData; // Success! Exit the retry loop
+        
+      } catch (retryErr: any) {
+        // Check if this is a network error
+        const errorMsg = retryErr?.message || String(retryErr);
+        if (errorMsg.includes('connection reset') || errorMsg.includes('network') || errorMsg.includes('ECONNRESET')) {
+          lastError = retryErr;
+          retries++;
+          if (retries < maxRetries) {
+            const delay = Math.min(1000 * Math.pow(2, retries), 5000);
+            console.log(`getUserFromToken: Network error in retry loop, attempt ${retries}/${maxRetries}, waiting ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+        }
+        
+        // Not a retriable error or max retries reached
+        throw retryErr;
+      }
+    }
+    
+    // If we get here, all retries failed
+    console.error('getUserFromToken: All retries failed, last error:', lastError);
+    return null;
+    
   } catch (err: any) {
     console.error('getUserFromToken: Exception:', err);
     return null;

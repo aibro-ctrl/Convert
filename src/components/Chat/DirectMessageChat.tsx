@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { DirectMessage, Message, dmAPI, messagesAPI, usersAPI, User } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { useAchievements } from '../../contexts/AchievementsContext';
 import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { Button } from '../ui/button';
-import { Avatar } from '../ui/avatar';
+import { Avatar, AvatarImage, AvatarFallback } from '../ui/avatar';
 import { toast } from '../ui/sonner';
 import { ArrowLeft, ArrowDown } from '../ui/icons';
 
@@ -16,11 +17,13 @@ interface DirectMessageChatProps {
 
 export function DirectMessageChat({ dm, onBack, onUserClick: onUserClickProp }: DirectMessageChatProps) {
   const { user } = useAuth();
+  const { tracker } = useAchievements();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [otherUser, setOtherUser] = useState<User | null>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [hasSentFirstMessage, setHasSentFirstMessage] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -103,6 +106,52 @@ export function DirectMessageChat({ dm, onBack, onUserClick: onUserClickProp }: 
     try {
       await dmAPI.sendMessage(dm.id, content, type, replyTo);
       setReplyingTo(null);
+      
+      // Проверка на первое сообщение в ЛС
+      if (!hasSentFirstMessage && tracker) {
+        await tracker.checkFirstMessage();
+        setHasSentFirstMessage(true);
+      }
+      
+      // Проверка на голосовое сообщение
+      if (type === 'voice' && tracker) {
+        await tracker.checkVoiceMessage();
+      }
+      
+      // Проверка на видео кружочек
+      if (type === 'video' && tracker) {
+        await tracker.checkVideoCircleSent();
+      }
+      
+      // Проверка на ответ
+      if (replyTo && tracker) {
+        await tracker.checkReply();
+      }
+      
+      // Дополнительные проверки
+      if (tracker) {
+        // Общее количество сообщений
+        await tracker.checkTotalMessages();
+        
+        // Ночное сообщение
+        await tracker.checkNightMessage();
+        
+        // Скорострел
+        await tracker.checkSpeedShooter();
+        
+        // Упоминания
+        await tracker.checkMentions(content);
+        
+        // Новогоднее чудо
+        await tracker.checkNewYearMessage();
+        
+        // Парадокс
+        await tracker.checkParadoxMessage(content, new Date().toISOString());
+        
+        // Ежедневная активность
+        await tracker.checkDailyActivity();
+      }
+      
       await loadMessages();
       setTimeout(scrollToBottom, 100);
     } catch (error: any) {
@@ -156,8 +205,14 @@ export function DirectMessageChat({ dm, onBack, onUserClick: onUserClickProp }: 
           </Button>
           {otherUser && (
             <div className="flex items-center gap-3">
-              <Avatar className="w-10 h-10 bg-primary text-primary-foreground flex items-center justify-center">
-                {((otherUser as any).display_name || otherUser.username).charAt(0).toUpperCase()}
+              <Avatar className="w-10 h-10">
+                {(otherUser as any).avatar ? (
+                  <AvatarImage src={(otherUser as any).avatar} alt={otherUser.username} />
+                ) : (
+                  <AvatarFallback className="bg-primary/10 text-primary">
+                    {((otherUser as any).display_name || otherUser.username).charAt(0).toUpperCase()}
+                  </AvatarFallback>
+                )}
               </Avatar>
               <div>
                 <h2 className="font-semibold">

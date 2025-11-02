@@ -1,4 +1,5 @@
 import { projectId, publicAnonKey } from './supabase/info';
+import { isTokenExpired, clearStoragePreservingSettings } from './tokenUtils';
 
 const API_URL = `https://${projectId}.supabase.co/functions/v1/make-server-b0f1e6d5`;
 
@@ -60,9 +61,17 @@ export interface Message {
   edited_at?: string;
 }
 
-async function fetchAPI(endpoint: string, options: RequestInit = {}) {
-  const token = localStorage.getItem('access_token');
+export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
+  let token = localStorage.getItem('access_token');
   console.log(`fetchAPI: Token from localStorage:`, token ? token.substring(0, 20) + '...' : 'null');
+  
+  // Check if token is expired before making request
+  if (token && isTokenExpired(token)) {
+    console.warn('fetchAPI: Token is expired, clearing localStorage');
+    clearStoragePreservingSettings();
+    // Don't use expired token - use anon key instead
+    token = null;
+  }
   
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
@@ -113,9 +122,15 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}) {
         error = { error: `Server error: ${response.status} ${response.statusText}` };
       }
       
-      // Не логируем 401 ошибки как критические - это ожидаемо при отсутствии токена
+      // Handle 401 errors - clear expired/invalid tokens
       if (response.status === 401) {
-        console.log(`API ${endpoint}: Unauthorized (expected when not logged in)`);
+        console.log(`API ${endpoint}: Unauthorized - clearing token`);
+        if (token) {
+          console.log('Clearing expired/invalid token from localStorage');
+          clearStoragePreservingSettings();
+          // Trigger page reload to show login screen
+          setTimeout(() => window.location.reload(), 100);
+        }
       } else {
         console.error(`API Error: ${endpoint}`, error);
       }

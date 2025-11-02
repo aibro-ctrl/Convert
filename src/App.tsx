@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ConnectionProvider, useConnection } from './contexts/ConnectionContext';
+import { AchievementsProvider } from './contexts/AchievementsContext';
 import { Login } from './components/Auth/Login';
 import { Register } from './components/Auth/Register';
 import { ResetPassword } from './components/Auth/ResetPassword';
@@ -16,6 +17,11 @@ import { Toaster, ToastProvider, useToastListener } from './components/ui/sonner
 import { Badge } from './components/ui/badge';
 import { Room, DirectMessage, roomsAPI, dmAPI, notificationsAPI } from './utils/api';
 import { MessageCircle, Users, User, WifiOff, Wifi, Mail } from './components/ui/icons';
+import { validateAndCleanToken } from './utils/tokenUtils';
+import { BackendHealthCheck } from './components/Admin/BackendHealthCheck';
+
+// Validate token on app startup - this runs before React renders
+validateAndCleanToken();
 
 function AuthScreen() {
   const [showLogin, setShowLogin] = useState(true);
@@ -61,6 +67,9 @@ function AuthScreen() {
           <Register onSwitchToLogin={() => setShowLogin(true)} />
         )}
       </div>
+      
+      {/* Backend health check - shows deployment status */}
+      <BackendHealthCheck />
     </div>
   );
 }
@@ -91,6 +100,7 @@ function MainApp() {
     if (!user) return;
 
     let previousRooms: Room[] = [];
+    let previousDMs: DirectMessage[] = [];
 
     const updateUnreadCounts = async () => {
       try {
@@ -116,14 +126,43 @@ function MainApp() {
         const { dms } = await dmAPI.getAll();
         let dmCount = 0;
         
+        // Проверяем новые DM и показываем уведомления
         dms.forEach((dm: DirectMessage) => {
           const count = dm.unread_count?.[user.id] || 0;
           if (count > 0) {
             dmCount += count;
+            
+            // Показываем уведомление о новом личном сообщении
+            const previousDM = previousDMs.find((prevDm: DirectMessage) => prevDm.id === dm.id);
+            const previousCount = previousDM?.unread_count?.[user.id] || 0;
+            
+            // Есть новое непрочитанное сообщение
+            if (count > previousCount && isOnline && window.showNotificationToast && dm.last_message) {
+              const notifKey = `shown_dm_${dm.id}_${dm.last_message.id}`;
+              if (!sessionStorage.getItem(notifKey)) {
+                sessionStorage.setItem(notifKey, 'true');
+                
+                // Получаем информацию об отправителе
+                const otherUserId = dm.participants.find(id => id !== user.id);
+                if (otherUserId && dm.last_message.sender_id === otherUserId) {
+                  import('./utils/api').then(({ usersAPI }) => {
+                    usersAPI.getById(otherUserId).then(({ user: sender }) => {
+                      window.showNotificationToast?.({
+                        type: 'dm',
+                        from: sender,
+                        content: dm.last_message!.content,
+                        dm: dm,
+                      });
+                    }).catch(console.error);
+                  });
+                }
+              }
+            }
           }
         });
 
         previousRooms = rooms;
+        previousDMs = dms;
 
         // Подсчет непрочитанных уведомлений и проверка на новые запросы в друзья
         const notifications = await notificationsAPI.getAll();
@@ -212,6 +251,7 @@ function MainApp() {
         />
         <NotificationToast 
           onOpenChat={(room) => setSelectedRoom(room)}
+          onOpenDM={(dm) => setSelectedDM(dm)}
           onOpenFriendRequests={handleOpenFriends}
           currentUserId={user?.id || ''}
         />
@@ -235,6 +275,7 @@ function MainApp() {
         />
         <NotificationToast 
           onOpenChat={(room) => setSelectedRoom(room)}
+          onOpenDM={(dm) => setSelectedDM(dm)}
           onOpenFriendRequests={handleOpenFriends}
           currentUserId={user?.id || ''}
         />
@@ -346,6 +387,7 @@ function MainApp() {
 
       <NotificationToast 
         onOpenChat={(room) => setSelectedRoom(room)}
+        onOpenDM={(dm) => setSelectedDM(dm)}
         onOpenFriendRequests={handleOpenFriends}
         currentUserId={user?.id || ''}
       />
@@ -360,7 +402,9 @@ export default function App() {
       <ThemeProvider>
         <ConnectionProvider>
           <AuthProvider>
-            <MainApp />
+            <AchievementsProvider>
+              <MainApp />
+            </AchievementsProvider>
           </AuthProvider>
         </ConnectionProvider>
       </ThemeProvider>

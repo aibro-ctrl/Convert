@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Room, Message, messagesAPI, roomsAPI, User, usersAPI } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { useAchievements } from '../../contexts/AchievementsContext';
 import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { MembersModal } from './MembersModal';
@@ -22,6 +23,7 @@ interface ChatRoomProps {
 
 export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFriends }: ChatRoomProps) {
   const { user, godModeEnabled } = useAuth();
+  const { tracker } = useAchievements();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -176,6 +178,59 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
     try {
       await messagesAPI.send(room.id, content, type, replyTo);
       setReplyingTo(null);
+      
+      // Трекинг достижений
+      if (tracker) {
+        // Первое сообщение (общее)
+        tracker.checkFirstMessage();
+        
+        // Общее количество сообщений
+        tracker.checkTotalMessages();
+        
+        // Ночное сообщение
+        tracker.checkNightMessage();
+        
+        // Скорострел (10 сообщений за 15 секунд)
+        tracker.checkSpeedShooter();
+        
+        // Новогоднее чудо
+        tracker.checkNewYearMessage();
+        
+        // Ежедневная активность
+        tracker.checkDailyActivity();
+        
+        // Проверка на парадокс
+        tracker.checkParadoxMessage(content, new Date().toISOString());
+        
+        // Проверка упоминаний (5+ человек в одном сообщении)
+        tracker.checkMentions(content);
+        
+        // Голосовое сообщение
+        if (type === 'voice') {
+          tracker.checkVoiceMessage();
+        }
+        
+        // Фото
+        if (type === 'image') {
+          tracker.checkPhotoSent();
+        }
+        
+        // Файл
+        if (type === 'file') {
+          tracker.checkFileSent();
+        }
+        
+        // Видео кружочек
+        if (type === 'video') {
+          tracker.checkVideoCircleSent();
+        }
+        
+        // Ответ на сообщение
+        if (replyTo) {
+          tracker.checkReply();
+        }
+      }
+      
       // Обновляем сообщения и прокручиваем вниз
       await loadMessages();
       setTimeout(scrollToBottom, 100);

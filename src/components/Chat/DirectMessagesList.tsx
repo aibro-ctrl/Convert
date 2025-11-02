@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DirectMessage, dmAPI, usersAPI, User } from '../../utils/api';
+import { DirectMessage, dmAPI, usersAPI, User, roomsAPI } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Badge } from '../ui/badge';
 import { Avatar, AvatarImage, AvatarFallback } from '../ui/avatar';
 import { toast } from '../ui/sonner';
-import { Plus, MessageCircle, Search } from '../ui/icons';
+import { Plus, MessageCircle, Search, Trash2 } from '../ui/icons';
 
 interface DirectMessagesListProps {
   onSelectDM: (dm: DirectMessage) => void;
@@ -116,6 +116,23 @@ export function DirectMessagesList({ onSelectDM }: DirectMessagesListProps) {
 
   const handleSelectDM = (dm: DirectMessage) => {
     onSelectDM(dm);
+  };
+
+  const handleDeleteDM = async (dmId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Предотвращаем открытие чата
+    
+    if (!confirm('Вы уверены, что хотите удалить этот чат? Все сообщения будут удалены.')) {
+      return;
+    }
+    
+    try {
+      await roomsAPI.delete(dmId);
+      toast.success('Чат удален');
+      await loadDMs();
+    } catch (error: any) {
+      console.error('Error deleting DM:', error);
+      toast.error(error.message || 'Не удалось удалить чат');
+    }
   };
 
   if (loading) {
@@ -263,9 +280,18 @@ export function DirectMessagesList({ onSelectDM }: DirectMessagesListProps) {
             return (
               <Card
                 key={dm.id}
-                className="cursor-pointer hover:bg-accent transition-colors"
+                className="relative cursor-pointer hover:bg-accent transition-colors group"
                 onClick={() => handleSelectDM(dm)}
               >
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive hover:text-destructive-foreground"
+                  onClick={(e) => handleDeleteDM(dm.id, e)}
+                  title="Удалить чат"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
                 <CardHeader className="p-4">
                   <div className="flex items-center gap-3">
                     <Avatar className="w-12 h-12 shrink-0">
@@ -303,7 +329,7 @@ export function DirectMessagesList({ onSelectDM }: DirectMessagesListProps) {
                             }
                             // Проверка на URL медиа
                             if (content.startsWith('https://') && content.includes('supabase.co')) {
-                              if (content.includes('/voice/')) return '🎤 Голосовое сообщение';
+                              if (content.includes('/voice/')) return '🎤 Голосовое сооб��ение';
                               if (content.includes('/video/')) return '🎥 Видео-кружок';
                               if (content.includes('/images/')) return '🖼️ Изображение';
                             }
