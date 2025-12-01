@@ -2,10 +2,13 @@
 
 /**
  * Скрипт валидации учетных данных администратора PocketBase
+ * После успешной авторизации сохраняет токен для дальнейшего использования
  * Использование: node validate-admin.js <email> <password> <url>
  */
 
 const PocketBase = require('pocketbase').default || require('pocketbase');
+const fs = require('fs');
+const path = require('path');
 
 async function validateAdmin(email, password, url) {
   const pb = new PocketBase(url);
@@ -14,12 +17,28 @@ async function validateAdmin(email, password, url) {
     // Попытка авторизации с использованием нового endpoint
     const authData = await pb.collection('_superusers').authWithPassword(email, password);
     
+    // Сохраняем токен авторизации в файл для дальнейшего использования
+    const authToken = pb.authStore.token;
+    const tokenFilePath = path.join(__dirname, '.pb-auth-token');
+    
+    fs.writeFileSync(tokenFilePath, JSON.stringify({
+      token: authToken,
+      adminId: authData.record.id,
+      adminEmail: authData.record.email,
+      url: url,
+      timestamp: new Date().toISOString()
+    }, null, 2));
+    
+    // Устанавливаем права доступа только для владельца (600)
+    fs.chmodSync(tokenFilePath, 0o600);
+    
     // Если авторизация успешна
     console.log('SUCCESS');
     console.log(JSON.stringify({
       id: authData.record.id,
       email: authData.record.email,
-      created: authData.record.created
+      created: authData.record.created,
+      tokenSaved: true
     }));
     process.exit(0);
   } catch (error) {

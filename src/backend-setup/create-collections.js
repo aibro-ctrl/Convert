@@ -2,10 +2,13 @@
 
 /**
  * Скрипт создания коллекций PocketBase для чата "Конверт"
+ * Использует токен авторизации из .pb-auth-token (создается validate-admin.js)
  * Запускается автоматически из setup.sh
  */
 
 const PocketBase = require('pocketbase').default || require('pocketbase');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 
 const POCKETBASE_URL = process.env.VITE_POCKETBASE_URL || 'http://127.0.0.1:54739';
@@ -268,85 +271,38 @@ async function createCollections() {
   }
 
   // Авторизация администратора
-  console.log('🔐 Авторизация администратора...');
+  console.log('🔐 Использование сохраненной авторизации...');
   
-  let email, password;
+  // Проверяем наличие токена авторизации
+  const tokenPath = path.join(__dirname, '.pb-auth-token');
   
-  // Проверяем переменные окружения
-  if (process.env.POCKETBASE_ADMIN_EMAIL && process.env.POCKETBASE_ADMIN_PASSWORD) {
-    email = process.env.POCKETBASE_ADMIN_EMAIL;
-    password = process.env.POCKETBASE_ADMIN_PASSWORD;
-    console.log('Используются учетные данные из .env файла');
-  } else {
-    // Интерактивный ввод
-    console.log('Введите email и пароль администратора PocketBase');
-    
-    const readline = require('readline');
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-
-    email = await new Promise(resolve => {
-      rl.question('Email администратора: ', resolve);
-    });
-
-    password = await new Promise(resolve => {
-      rl.question('Пароль: ', (answer) => {
-        resolve(answer);
-      });
-    });
-
-    rl.close();
+  if (!fs.existsSync(tokenPath)) {
+    console.error('✗ Токен авторизации не найден!');
+    console.error('');
+    console.error('❌ Сначала выполните авторизацию:');
+    console.error('   1. Запустите setup.sh ');
+    console.error('   2. Или выполните: node validate-admin.js admin@localhost your_password');
+    console.error('');
+    process.exit(1);
   }
-
+  
   try {
-    // В новых версиях PocketBase используется другой endpoint
-    await pb.collection('_superusers').authWithPassword(email, password);
-    console.log('✓ Авторизация успешна\n');
+    // Загружаем сохраненный токен
+    const authData = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+    
+    // Устанавливаем токен в authStore
+    pb.authStore.save(authData.token, null);
+    
+    console.log(`✓ Авторизован как: ${authData.adminEmail}`);
+    console.log(`  (токен создан: ${new Date(authData.timestamp).toLocaleString('ru-RU')})\n`);
   } catch (error) {
-    console.error('✗ Ошибка авторизации:', error.message);
-    
-    // Детальная диагностика
-    if (error.status === 404 || error.message.includes("wasn't found")) {
-      console.error('\n❌ КРИТИЧЕСКАЯ ОШИБКА: Администратор PocketBase не создан!\n');
-      console.error('📝 Как создать администратора:');
-      console.error('  1. Откройте в браузере:');
-      console.error('     ' + POCKETBASE_URL + '/_/');
-      console.error('');
-      console.error('  2. Если видите форму создания администратора:');
-      console.error('     - Заполните Email');
-      console.error('     - Введите пароль (минимум 8 символов)');
-      console.error('     - Нажмите "Create admin"');
-      console.error('');
-      console.error('  3. Если видите форму входа - администратор уже создан:');
-      console.error('     - Проверьте правильность email и пароля');
-      console.error('     - Email должен быть валидным (например: admin@localhost)');
-      console.error('');
-      console.error('  4. Запустите этот скрипт снова\n');
-    } else if (error.status === 400) {
-      console.error('\n❌ Неверный email или пароль!\n');
-      console.error('  - Проверьте правильность учетных данных');
-      console.error('  - Email должен быть валидным');
-      console.error('  - Пароль должен быть минимум 8 символов\n');
-    } else if (error.status === 401 || error.status === 403) {
-      console.error('\n❌ Неверные учетные данные!\n');
-      console.error('  - Email: ' + email);
-      console.error('  - Проверьте пароль\n');
-    } else {
-      console.error('\n❌ Неизвестная ошибка:\n');
-      console.error('  Status:', error.status);
-      console.error('  Message:', error.message);
-      if (error.response) {
-        console.error('  Response:', JSON.stringify(error.response, null, 2));
-      }
-      console.error('\n💡 Попробуйте:');
-      console.error('  1. Открыть ' + POCKETBASE_URL + '/_/');
-      console.error('  2. Убедиться что администратор создан');
-      console.error('  3. Проверить email и пароль');
-      console.error('  4. Запустить скрипт снова\n');
-    }
-    
+    console.error('✗ Ошибка загрузки токена:', error.message);
+    console.error('');
+    console.error('💡 Попробуйте:');
+    console.error('   1. Удалить файл .pb-auth-token');
+    console.error('   2. Запустить setup.sh снова');
+    console.error('   3. Или выполнить: node validate-admin.js admin@localhost your_password');
+    console.error('');
     process.exit(1);
   }
 
