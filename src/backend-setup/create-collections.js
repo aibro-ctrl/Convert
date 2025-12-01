@@ -5,7 +5,7 @@
  * Запускается автоматически из setup.sh
  */
 
-const PocketBase = require('pocketbase');
+const PocketBase = require('pocketbase').default || require('pocketbase');
 require('dotenv').config();
 
 const POCKETBASE_URL = process.env.VITE_POCKETBASE_URL || 'http://localhost:8090';

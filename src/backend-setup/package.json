@@ -4,6 +4,8 @@
   "description": "Native backend setup for Konvert Chat (PocketBase + Redis, no Docker)",
   "scripts": {
     "setup": "bash setup.sh",
+    "install-deps": "bash install-deps.sh",
+    "test-imports": "node test-imports.js",
     "create-collections": "node create-collections.js",
     "test": "node test-connection.js",
     "cache:stats": "node -e \"const {getRedisCache}=require('./redis-cache');getRedisCache().printStats().then(()=>process.exit(0))\"",

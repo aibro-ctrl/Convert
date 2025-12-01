@@ -4,7 +4,7 @@
  * Тест подключения к PocketBase и Redis
  */
 
-const PocketBase = require('pocketbase');
+const PocketBase = require('pocketbase').default || require('pocketbase');
 const Redis = require('ioredis');
 require('dotenv').config();
 
