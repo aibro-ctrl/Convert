@@ -19,6 +19,7 @@ export interface User {
   muted?: boolean;
   friends?: string[];
   blocked_users?: string[]; // Array of blocked user IDs
+  public_key?: string; // RSA публичный ключ для E2EE
 }
 
 export interface Room {
@@ -316,6 +317,24 @@ export const usersAPI = {
   unblockUser: (userId: string) =>
     fetchAPI(`/users/${userId}/unblock`, {
       method: 'POST',
+    }),
+
+  // E2EE: Обновить публичный ключ пользователя
+  updatePublicKey: (publicKey: string) =>
+    fetchAPI('/users/public-key', {
+      method: 'PUT',
+      body: JSON.stringify({ publicKey }),
+    }),
+
+  // E2EE: Получить зашифрованный ключ комнаты для текущего пользователя
+  getRoomKey: (roomId: string) =>
+    fetchAPI(`/rooms/${roomId}/key`),
+
+  // E2EE: Сохранить зашифрованные ключи комнаты для участников
+  saveRoomKeys: (roomId: string, encryptedKeys: { [userId: string]: string }) =>
+    fetchAPI(`/rooms/${roomId}/keys`, {
+      method: 'POST',
+      body: JSON.stringify({ encryptedKeys }),
     }),
 };
 

@@ -1,0 +1,32 @@
+{
+  "name": "konvert-migration",
+  "version": "1.0.0",
+  "description": "Migration tools for Konvert Chat from Supabase to PocketBase",
+  "scripts": {
+    "migrate:export": "ts-node migrate.ts export",
+    "migrate:import": "ts-node migrate.ts import",
+    "migrate:auto": "ts-node migrate.ts auto",
+    "install:all": "chmod +x install.sh && ./install.sh",
+    "check:env": "node -e \"require('dotenv').config(); console.log('Environment check passed!');\"",
+    "test:connection": "node -e \"fetch('http://localhost:8090/api/health').then(r => console.log('✓ PocketBase OK')).catch(e => console.error('✗ PocketBase failed'))\""
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "pocketbase": "^0.19.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  },
+  "keywords": [
+    "migration",
+    "supabase",
+    "pocketbase",
+    "chat",
+    "konvert"
+  ],
+  "author": "Konvert Chat",
+  "license": "MIT"
+}

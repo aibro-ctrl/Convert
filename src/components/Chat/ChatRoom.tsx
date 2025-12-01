@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Room, Message, messagesAPI, roomsAPI, User, usersAPI } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { useCrypto } from '../../contexts/CryptoContext';
 import { useAchievements } from '../../contexts/AchievementsContext';
+import { encryptMessageContent } from '../../utils/messageEncryption';
 import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { MembersModal } from './MembersModal';
@@ -24,6 +26,7 @@ interface ChatRoomProps {
 export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFriends }: ChatRoomProps) {
   const { user, godModeEnabled } = useAuth();
   const { tracker } = useAchievements();
+  const { cryptoKey } = useCrypto();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -176,7 +179,10 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
 
   const handleSendMessage = async (content: string, type: Message['type'], replyTo?: string) => {
     try {
-      await messagesAPI.send(room.id, content, type, replyTo);
+      // Шифруем содержимое сообщения, если это необходимо
+      const encryptedContent = type === 'text' && cryptoKey ? await encryptMessageContent(content, cryptoKey) : content;
+      
+      await messagesAPI.send(room.id, encryptedContent, type, replyTo);
       setReplyingTo(null);
       
       // Трекинг достижений
@@ -397,7 +403,7 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
   return (
     <div className="h-full flex flex-col">
       {/* Header - Sticky */}
-      <div className="sticky top-0 z-30 border-b p-4 flex items-center justify-between bg-background">
+      <div className="sticky top-0 z-30 border-b p-4 pt-6 flex items-center justify-between bg-background">
         <div className="flex items-center gap-3">
           <Button 
             variant="ghost" 

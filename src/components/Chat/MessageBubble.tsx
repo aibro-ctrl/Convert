@@ -395,7 +395,8 @@ export function MessageBubble({
                     <SimpleAudioPlayer src={message.content} />
                   </div>
                 ) : message.type === 'video' ? (
-                  <div>
+                  <div className="space-y-2">
+                    <p className="text-sm opacity-70">🎥 Видео</p>
                     <VideoPlayer src={message.content} />
                   </div>
                 ) : (

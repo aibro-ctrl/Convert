@@ -33,6 +33,8 @@ export interface User {
   deleted?: boolean; // Флаг мягкого удаления
   deleted_at?: string; // Дата удаления
   deleted_by?: string; // Кто удалил
+  public_key?: string; // RSA публичный ключ для E2EE (Base64)
+  room_keys?: { [roomId: string]: string }; // Зашифрованные ключи комнат для этого пользователя
 }
 
 export async function signup(email: string, password: string, username: string) {
@@ -811,7 +813,7 @@ export async function deleteUser(userId: string, deletedBy: string) {
     
     // Только админ может удалять пользователей
     if (deleter?.role !== 'admin') {
-      return { error: 'Только администратор может удалять пользователей' };
+      return { error: 'Только администратор мож��т удалять пользователей' };
     }
 
     const user = await kv.get(`user:${userId}`) as User;

@@ -1,0 +1,30 @@
+{
+  "name": "konvert-backend-setup",
+  "version": "1.0.0",
+  "description": "Native backend setup for Konvert Chat (PocketBase + Redis, no Docker)",
+  "scripts": {
+    "setup": "bash setup.sh",
+    "create-collections": "node create-collections.js",
+    "test": "node test-connection.js",
+    "cache:stats": "node -e \"const {getRedisCache}=require('./redis-cache');getRedisCache().printStats().then(()=>process.exit(0))\"",
+    "cache:clear": "node -e \"const {getRedisCache}=require('./redis-cache');getRedisCache().invalidateAll().then(()=>process.exit(0))\"",
+    "pb:collections": "node create-collections.js",
+    "pb:status": "systemctl status konvert-pocketbase",
+    "redis:status": "systemctl status redis-server"
+  },
+  "keywords": [
+    "konvert",
+    "chat",
+    "pocketbase",
+    "redis",
+    "backend",
+    "setup"
+  ],
+  "author": "Konvert Chat",
+  "license": "MIT",
+  "dependencies": {
+    "pocketbase": "^0.19.0",
+    "ioredis": "^5.3.2",
+    "dotenv": "^16.3.1"
+  }
+}

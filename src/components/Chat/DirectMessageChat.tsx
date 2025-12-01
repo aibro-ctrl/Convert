@@ -194,7 +194,7 @@ export function DirectMessageChat({ dm, onBack, onUserClick: onUserClickProp }: 
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="sticky top-0 z-30 border-b p-4 flex items-center justify-between bg-background">
+      <div className="sticky top-0 z-30 border-b p-4 pt-6 flex items-center justify-between bg-background">
         <div className="flex items-center gap-3">
           <Button 
             variant="ghost" 

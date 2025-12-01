@@ -134,6 +134,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem('refresh_token', data.refresh_token);
       }
       setUser(data.user);
+      
+      // Инициализация E2EE ключей после успешного входа
+      // CryptoContext инициализирует ключи автоматически через useEffect при появлении user
+      // Используем пароль для расшифровки приватного ключа
+      localStorage.setItem('temp_password', password);
+      setTimeout(() => localStorage.removeItem('temp_password'), 5000); // Удаляем через 5 сек
     } catch (error) {
       console.error('AuthContext: Signin error:', error);
       throw error;
@@ -145,11 +151,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.log('AuthContext: Calling signup API');
       const data = await authAPI.signup(email, password, username);
       console.log('AuthContext: Signup response:', data);
-      console.log('AuthContext: Access token:', data.access_token);
-      console.log('AuthContext: User:', data.user);
       
       if (!data.access_token) {
-        console.error('AuthContext: No access token in response!');
         throw new Error('Не получен токен доступа');
       }
       
@@ -157,10 +160,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (data.refresh_token) {
         localStorage.setItem('refresh_token', data.refresh_token);
       }
-      console.log('AuthContext: Token saved to localStorage');
-      
       setUser(data.user);
-      console.log('AuthContext: User state updated, should trigger re-render');
+      
+      // Инициализация E2EE ключей для нового пользователя
+      // Сохраняем пароль временно для генерации ключей
+      localStorage.setItem('temp_password', password);
+      setTimeout(() => localStorage.removeItem('temp_password'), 5000);
     } catch (error) {
       console.error('AuthContext: Signup error:', error);
       throw error;

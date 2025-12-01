@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # PocketBase - основная база данных
+  pocketbase:
+    image: ghcr.io/muchobien/pocketbase:latest
+    container_name: konvert_pocketbase
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./pb_data:/pb_data
+      - ./pb_migrations:/pb_migrations
+    environment:
+      - POCKETBASE_ADMIN_EMAIL=${POCKETBASE_ADMIN_EMAIL:-admin@konvert.chat}
+      - POCKETBASE_ADMIN_PASSWORD=${POCKETBASE_ADMIN_PASSWORD:-changeme123}
+    command: serve --http=0.0.0.0:8090
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8090/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - konvert_network
+
+  # Redis - кэширование и real-time
+  redis:
+    image: redis:7-alpine
+    container_name: konvert_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - konvert_network
+
+  # Nginx - reverse proxy (опционально)
+  nginx:
+    image: nginx:alpine
+    container_name: konvert_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
+    depends_on:
+      - pocketbase
+    networks:
+      - konvert_network
+    profiles:
+      - production
+
+  # Backup service (опционально)
+  backup:
+    image: alpine:latest
+    container_name: konvert_backup
+    restart: unless-stopped
+    volumes:
+      - ./pb_data:/data/pb_data:ro
+      - ./backups:/backups
+      - ./backup.sh:/backup.sh:ro
+    entrypoint: /bin/sh
+    command: 
+      - -c
+      - |
+        apk add --no-cache dcron
+        echo "0 2 * * * /backup.sh" | crontab -
+        crond -f
+    networks:
+      - konvert_network
+    profiles:
+      - production
+
+volumes:
+  redis_data:
+    driver: local
+
+networks:
+  konvert_network:
+    driver: bridge

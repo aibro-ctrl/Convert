@@ -10,6 +10,7 @@ import * as notifications from "./notifications.tsx";
 import * as storage from "./storage.tsx";
 import * as directMessages from "./direct_messages.tsx";
 import achievementsApp from "./achievements.tsx";
+import * as crypto from "./crypto.tsx";
 
 const app = new Hono();
 
@@ -2291,5 +2292,98 @@ initializeSystemRooms().catch(err => {
 
 // Mount achievements routes
 app.route('/', achievementsApp);
+
+// ========== E2EE ROUTES ==========
+
+// Обновить публичный ключ пользователя
+app.put("/make-server-b0f1e6d5/users/public-key", async (c) => {
+  try {
+    const token = c.req.header('Authorization')?.split(' ')[1];
+    if (!token) {
+      return c.json({ error: 'Требуется авторизация' }, 401);
+    }
+
+    const currentUser = await auth.getUserFromToken(token);
+    if (!currentUser) {
+      return c.json({ error: 'Недействительный токен' }, 401);
+    }
+
+    const { publicKey } = await c.req.json();
+    if (!publicKey) {
+      return c.json({ error: 'Публичный ключ обязателен' }, 400);
+    }
+
+    const result = await crypto.updatePublicKey(currentUser.id, publicKey);
+    
+    if (result.error) {
+      return c.json({ error: result.error }, 400);
+    }
+
+    return c.json(result.data);
+  } catch (err) {
+    console.error('Update public key error:', err);
+    return c.json({ error: `Ошибка: ${err.message}` }, 500);
+  }
+});
+
+// Получить зашифрованный ключ комнаты
+app.get("/make-server-b0f1e6d5/rooms/:roomId/key", async (c) => {
+  try {
+    const token = c.req.header('Authorization')?.split(' ')[1];
+    if (!token) {
+      return c.json({ error: 'Требуется авторизация' }, 401);
+    }
+
+    const currentUser = await auth.getUserFromToken(token);
+    if (!currentUser) {
+      return c.json({ error: 'Недействительный токен' }, 401);
+    }
+
+    const roomId = c.req.param('roomId');
+    const result = await crypto.getRoomKey(currentUser.id, roomId);
+    
+    if (result.error) {
+      return c.json({ error: result.error }, 400);
+    }
+
+    return c.json(result.data);
+  } catch (err) {
+    console.error('Get room key error:', err);
+    return c.json({ error: `Ошибка: ${err.message}` }, 500);
+  }
+});
+
+// Сохранить зашифрованные ключи комнаты для участников
+app.post("/make-server-b0f1e6d5/rooms/:roomId/keys", async (c) => {
+  try {
+    const token = c.req.header('Authorization')?.split(' ')[1];
+    if (!token) {
+      return c.json({ error: 'Требуется авторизация' }, 401);
+    }
+
+    const currentUser = await auth.getUserFromToken(token);
+    if (!currentUser) {
+      return c.json({ error: 'Недействительный токен' }, 401);
+    }
+
+    const roomId = c.req.param('roomId');
+    const { encryptedKeys } = await c.req.json();
+    
+    if (!encryptedKeys || typeof encryptedKeys !== 'object') {
+      return c.json({ error: 'Зашифрованные ключи обязательны' }, 400);
+    }
+
+    const result = await crypto.saveRoomKeys(currentUser.id, roomId, encryptedKeys);
+    
+    if (result.error) {
+      return c.json({ error: result.error }, 400);
+    }
+
+    return c.json(result.data);
+  } catch (err) {
+    console.error('Save room keys error:', err);
+    return c.json({ error: `Ошибка: ${err.message}` }, 500);
+  }
+});
 
 Deno.serve(app.fetch);

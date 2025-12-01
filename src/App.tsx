@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ConnectionProvider, useConnection } from './contexts/ConnectionContext';
 import { AchievementsProvider } from './contexts/AchievementsContext';
+import { CryptoProvider } from './contexts/CryptoContext';
 import { Login } from './components/Auth/Login';
 import { Register } from './components/Auth/Register';
 import { ResetPassword } from './components/Auth/ResetPassword';
@@ -18,7 +19,8 @@ import { Badge } from './components/ui/badge';
 import { Room, DirectMessage, roomsAPI, dmAPI, notificationsAPI } from './utils/api';
 import { MessageCircle, Users, User, WifiOff, Wifi, Mail } from './components/ui/icons';
 import { validateAndCleanToken } from './utils/tokenUtils';
-import { BackendHealthCheck } from './components/Admin/BackendHealthCheck';
+import logoEnvelope from 'figma:asset/28456c23b87e910377ba6ff1bfaf8a2b2f85670a.png';
+import logoText from 'figma:asset/358c3d7b52371e48c9dc5b2ec3f5b14609eb7b5e.png';
 
 // Validate token on app startup - this runs before React renders
 validateAndCleanToken();
@@ -67,9 +69,6 @@ function AuthScreen() {
           <Register onSwitchToLogin={() => setShowLogin(true)} />
         )}
       </div>
-      
-      {/* Backend health check - shows deployment status */}
-      <BackendHealthCheck />
     </div>
   );
 }
@@ -291,7 +290,10 @@ function MainApp() {
       <div className="border-b p-4 bg-background">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl">💬 Конверт</h1>
+            <div className="flex items-center gap-2">
+              <img src={logoEnvelope} alt="Конверт" className="h-8 w-auto" />
+              <img src={logoText} alt="Конверт" className="h-8 w-auto" />
+            </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">{user.username}</span>
               <span className="px-2 py-1 bg-primary/10 text-primary text-xs rounded">
@@ -403,7 +405,9 @@ export default function App() {
         <ConnectionProvider>
           <AuthProvider>
             <AchievementsProvider>
-              <MainApp />
+              <CryptoProvider>
+                <MainApp />
+              </CryptoProvider>
             </AchievementsProvider>
           </AuthProvider>
         </ConnectionProvider>

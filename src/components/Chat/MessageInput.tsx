@@ -527,7 +527,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
   };
 
   return (
-    <div className="border-t p-4 bg-background">
+    <div className="border-t p-4 pb-8 bg-background">
       {/* Индикатор загрузки */}
       {uploadProgress.show && (
         <div className="mb-3 flex items-center gap-3 bg-blue-50 dark:bg-blue-950 rounded-lg px-4 py-3 border border-blue-200 dark:border-blue-800">
@@ -624,9 +624,9 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
           onClick={handleSend}
           disabled={!content.trim() || disabled || isRecordingAudio}
           size="icon"
-          className="shrink-0"
+          className="shrink-0 h-14 w-14"
         >
-          <Send className="w-5 h-5" />
+          <Send className="w-6 h-6" />
         </Button>
       </div>
 
@@ -773,18 +773,18 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
             <Button
               variant="outline"
               className="h-24 flex-col gap-2"
-              onClick={() => handleFileSelect('file')}
+              onClick={() => handleFileSelect('camera')}
             >
-              <ImageIcon className="w-8 h-8" />
-              <span className="text-sm">Изображение</span>
+              <Camera className="w-8 h-8" />
+              <span className="text-sm">Отправить фото</span>
             </Button>
             <Button
               variant="outline"
               className="h-24 flex-col gap-2"
-              onClick={() => handleFileSelect('camera')}
+              onClick={() => handleFileSelect('file')}
             >
-              <Camera className="w-8 h-8" />
-              <span className="text-sm">Фото с камеры</span>
+              <Paperclip className="w-8 h-8" />
+              <span className="text-sm">Прикрепить файл</span>
             </Button>
             <Button
               variant="outline"
