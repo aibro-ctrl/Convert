@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { User, authAPI } from '../utils/api';
-import { isTokenExpired, clearStoragePreservingSettings } from '../utils/tokenUtils';
+import { User } from '../utils/api';
+import pb from '../utils/pocketbase/client';
+import { pbAuthService, convertPBUserToUser } from '../utils/pocketbase/services';
 
 interface AuthContextType {
   user: User | null;
@@ -19,99 +20,43 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const [godModeEnabled, setGodModeEnabled] = useState(() => {
     return localStorage.getItem('godModeEnabled') === 'true';
   });
 
   useEffect(() => {
     checkAuth();
-    
-    // Автопереподключение каждые 30 секунд если есть токен
-    const reconnectInterval = setInterval(() => {
-      const token = localStorage.getItem('access_token');
-      if (token && !user) {
-        console.log('AuthContext: Attempting automatic reconnection...');
-        checkAuth();
-        setReconnectAttempts(prev => prev + 1);
-      }
-    }, 30000);
-    
-    return () => clearInterval(reconnectInterval);
-  }, [user]);
+  }, []);
 
   const checkAuth = async () => {
     try {
       console.log('AuthContext: checkAuth started');
-      const token = localStorage.getItem('access_token');
-      console.log('AuthContext: Token in localStorage:', token ? token.substring(0, 20) + '...' : 'null');
       
-      // Pre-check: validate token format and expiry
-      if (token) {
-        // Use the centralized token validation
-        if (isTokenExpired(token, 0)) {
-          console.log('AuthContext: Token is expired - clearing immediately');
-          clearStoragePreservingSettings();
-          setUser(null);
-          setLoading(false);
-          return;
-        }
+      // Проверяем есть ли сохраненная авторизация в PocketBase
+      if (pb.authStore.isValid && pb.authStore.model) {
+        console.log('AuthContext: Valid PocketBase auth found');
         
-        // Log token info for debugging
         try {
-          const payload = JSON.parse(atob(token.split('.')[1]));
-          if (payload.exp) {
-            const expDate = new Date(payload.exp * 1000);
-            const now = new Date();
-            const minutesUntilExpiry = Math.floor((expDate.getTime() - now.getTime()) / 1000 / 60);
-            console.log(`AuthContext: Token is valid, expires in ${minutesUntilExpiry} minutes (at ${expDate.toISOString()})`);
-          }
-        } catch (e) {
-          console.error('AuthContext: Error parsing token for logging:', e);
-        }
-      }
-      
-      if (token && token.length > 20) { // Check token is not empty or too short
-        console.log('AuthContext: Fetching user with token');
-        try {
-          const data = await authAPI.getMe();
-          console.log('AuthContext: User data received:', data.user);
-          setUser(data.user);
+          // Получаем свежие данные пользователя
+          const { user: userData } = await pbAuthService.getMe();
+          console.log('AuthContext: User data received:', userData);
+          setUser(userData);
         } catch (error: any) {
-          console.error('AuthContext: Token validation failed:', error.message);
+          console.error('AuthContext: Failed to get user data:', error);
           
-          // Check if it's a network error
-          if (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError')) {
-            console.log('AuthContext: Network error - keeping token for retry');
-            // Don't clear token on network errors, just set user to null
-            setUser(null);
-          } else if (error.message?.includes('invalid claim') || 
-              error.message?.includes('Invalid token') || 
-              error.message?.includes('missing sub') ||
-              error.message?.includes('expired') ||
-              error.message?.includes('Недействительный токен')) {
-            console.log('AuthContext: Invalid token detected - clearing localStorage');
-            clearStoragePreservingSettings();
-            setUser(null);
-          } else {
-            // For other errors, just remove the token
-            console.log('AuthContext: Unknown error - removing token');
-            localStorage.removeItem('access_token');
+          // Если ошибка авторизации - очищаем
+          if (error.message?.includes('Не авторизован') || error.status === 401) {
+            pb.authStore.clear();
             setUser(null);
           }
         }
       } else {
-        console.log('AuthContext: No valid token found, user will be null');
-        if (token) {
-          // Remove invalid token
-          console.log('AuthContext: Removing invalid short token');
-          localStorage.removeItem('access_token');
-        }
+        console.log('AuthContext: No valid PocketBase auth found');
+        setUser(null);
       }
     } catch (error: any) {
       console.error('Auth check failed:', error);
-      console.log('AuthContext: Clearing localStorage due to error');
-      clearStoragePreservingSettings();
+      pb.authStore.clear();
       setUser(null);
     } finally {
       console.log('AuthContext: checkAuth completed, loading set to false');
@@ -122,24 +67,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signin = async (email: string, password: string) => {
     try {
       console.log('AuthContext: Calling signin API');
-      const data = await authAPI.signin(email, password);
+      const data = await pbAuthService.signin(email, password);
       console.log('AuthContext: Signin response:', data);
       
-      if (!data.access_token) {
-        throw new Error('Не получен токен доступа');
-      }
-      
-      localStorage.setItem('access_token', data.access_token);
-      if (data.refresh_token) {
-        localStorage.setItem('refresh_token', data.refresh_token);
-      }
       setUser(data.user);
       
-      // Инициализация E2EE ключей после успешного входа
-      // CryptoContext инициализирует ключи автоматически через useEffect при появлении user
-      // Используем пароль для расшифровки приватного ключа
+      // Сохраняем пароль временно для E2EE
       localStorage.setItem('temp_password', password);
-      setTimeout(() => localStorage.removeItem('temp_password'), 5000); // Удаляем через 5 сек
+      setTimeout(() => localStorage.removeItem('temp_password'), 5000);
     } catch (error) {
       console.error('AuthContext: Signin error:', error);
       throw error;
@@ -149,21 +84,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signup = async (email: string, password: string, username: string) => {
     try {
       console.log('AuthContext: Calling signup API');
-      const data = await authAPI.signup(email, password, username);
+      const data = await pbAuthService.signup(email, password, username);
       console.log('AuthContext: Signup response:', data);
       
-      if (!data.access_token) {
-        throw new Error('Не получен токен доступа');
-      }
-      
-      localStorage.setItem('access_token', data.access_token);
-      if (data.refresh_token) {
-        localStorage.setItem('refresh_token', data.refresh_token);
-      }
       setUser(data.user);
       
-      // Инициализация E2EE ключей для нового пользователя
-      // Сохраняем пароль временно для генерации ключей
+      // Сохраняем пароль временно для E2EE
       localStorage.setItem('temp_password', password);
       setTimeout(() => localStorage.removeItem('temp_password'), 5000);
     } catch (error) {
@@ -175,26 +101,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signout = async () => {
     console.log('AuthContext: Signing out');
     try {
-      await authAPI.signout(); // Отправляем запрос на сервер для обновления статуса
+      await pbAuthService.signout();
     } catch (error) {
       console.error('Signout error:', error);
     }
-    // Clear all localStorage data while preserving theme
-    clearStoragePreservingSettings();
+    
+    // Сохраняем тему перед очисткой
+    const theme = localStorage.getItem('theme');
+    localStorage.clear();
+    if (theme) {
+      localStorage.setItem('theme', theme);
+    }
+    
     setGodModeEnabled(false);
     setUser(null);
-    // Force page reload to ensure complete logout
+    
+    // Перезагружаем страницу
     window.location.reload();
   };
 
   const refreshUser = async () => {
     try {
-      const data = await authAPI.getMe();
+      const data = await pbAuthService.getMe();
       console.log('User refreshed:', {
         id: data.user.id,
         username: data.user.username,
-        hasAvatar: !!(data.user as any).avatar,
-        avatarUrl: (data.user as any).avatar?.substring(0, 100) + '...' || 'none'
+        hasAvatar: !!data.user.avatar
       });
       setUser(data.user);
     } catch (error) {
@@ -202,50 +134,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const refreshAuthToken = async () => {
-    const refresh_token = localStorage.getItem('refresh_token');
-    if (!refresh_token) {
-      console.log('No refresh token available');
-      return false;
-    }
-
-    try {
-      const data = await authAPI.refreshToken(refresh_token);
-      localStorage.setItem('access_token', data.access_token);
-      if (data.refresh_token) {
-        localStorage.setItem('refresh_token', data.refresh_token);
-      }
-      console.log('Token refreshed successfully');
-      return true;
-    } catch (error) {
-      console.error('Failed to refresh token:', error);
-      return false;
-    }
-  };
-
   const updateLastActivity = async () => {
     if (!user) return;
     try {
-      await authAPI.updateLastActivity();
-    } catch (error: any) {
-      // Если токен невалиден или истек, пробуем обновить его
-      if (error?.message?.includes('Недействительный токен') || error?.message?.includes('TOKEN_EXPIRED')) {
-        console.log('Token expired during activity update, attempting to refresh...');
-        const refreshed = await refreshAuthToken();
-        if (refreshed) {
-          // Пробуем еще раз обновить активность с новым токеном
-          try {
-            await authAPI.updateLastActivity();
-            console.log('Activity updated after token refresh');
-          } catch (retryError) {
-            console.error('Failed to update activity even after token refresh:', retryError);
-          }
-        } else {
-          console.log('Could not refresh token - user will need to re-login eventually');
-        }
-      } else {
-        console.error('Failed to update last activity:', error);
-      }
+      await pbAuthService.updateLastActivity();
+    } catch (error) {
+      console.error('Failed to update last activity:', error);
     }
   };
 

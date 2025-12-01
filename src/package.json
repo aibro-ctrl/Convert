@@ -1,0 +1,41 @@
+{
+  "name": "konvert-chat",
+  "version": "2.0.0",
+  "description": "Encrypted chat application with PocketBase backend",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "setup:backend": "cd backend-setup && npm install && ./setup.sh"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "latest",
+    "sonner": "^2.0.3",
+    "recharts": "^2.10.0",
+    "motion": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@types/node": "^20.10.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "typescript": "^5.3.0",
+    "vite": "^5.0.0",
+    "tailwindcss": "^4.0.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "autoprefixer": "^10.4.16"
+  },
+  "keywords": [
+    "chat",
+    "encrypted",
+    "e2ee",
+    "pocketbase",
+    "react",
+    "typescript"
+  ],
+  "author": "Konvert Chat Team",
+  "license": "MIT"
+}

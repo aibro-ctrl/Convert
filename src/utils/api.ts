@@ -1,8 +1,45 @@
-import { projectId, publicAnonKey } from './supabase/info';
+import pb from './pocketbase/client';
 import { isTokenExpired, clearStoragePreservingSettings } from './tokenUtils';
 
-const API_URL = `https://${projectId}.supabase.co/functions/v1/make-server-b0f1e6d5`;
+// Базовая функция для API вызовов (deprecated - используйте PocketBase services)
+// Оставлена для совместимости с модулем достижений
+export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
+  console.warn('fetchAPI is deprecated. Please use PocketBase services instead.');
+  
+  // Для достижений используем PocketBase напрямую
+  // TODO: Переписать систему достижений на PocketBase services
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+    ...(options.headers || {}),
+  };
 
+  // Используем токен из PocketBase если есть
+  const token = pb.authStore.token;
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  try {
+    // Временное решение: вызываем PocketBase API напрямую
+    // В будущем заменить на полноценные PocketBase services
+    const response = await fetch(`${pb.baseUrl}/api/collections/${endpoint}`, {
+      ...options,
+      headers,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Request failed' }));
+      throw new Error(error.error || `Request failed with status ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error: any) {
+    console.error(`API Error: ${endpoint}`, error);
+    throw error;
+  }
+}
+
+// API работает напрямую с PocketBase, без промежуточного сервера
 export interface User {
   id: string;
   email: string;
@@ -62,402 +99,187 @@ export interface Message {
   edited_at?: string;
 }
 
-export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
-  let token = localStorage.getItem('access_token');
-  console.log(`fetchAPI: Token from localStorage:`, token ? token.substring(0, 20) + '...' : 'null');
-  
-  // Check if token is expired before making request
-  if (token && isTokenExpired(token)) {
-    console.warn('fetchAPI: Token is expired, clearing localStorage');
-    clearStoragePreservingSettings();
-    // Don't use expired token - use anon key instead
-    token = null;
-  }
-  
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-    ...(options.headers || {}),
-  };
+// Этот файл больше не используется для прямых API вызовов
+// Вместо него используйте напрямую /utils/pocketbase/services.ts
 
-  // Use user token if available, otherwise use anon key for public endpoints
-  // Supabase Edge Functions require Authorization header for all requests
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-    console.log(`fetchAPI: Using user token for ${endpoint}`);
-  } else {
-    headers['Authorization'] = `Bearer ${publicAnonKey}`;
-    console.log(`fetchAPI: Using anon key for ${endpoint}`);
-  }
-
-  const url = `${API_URL}${endpoint}`;
-  console.log(`API Call: ${endpoint}`, { 
-    method: options.method || 'GET',
-    url,
-    headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k, typeof v === 'string' && k === 'Authorization' ? v.substring(0, 30) + '...' : v]))
-  });
-
-  try {
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    });
-
-    console.log(`API Response: ${endpoint}`, { 
-      status: response.status, 
-      ok: response.ok,
-      statusText: response.statusText,
-      contentType: response.headers.get('content-type')
-    });
-
-    if (!response.ok) {
-      // Try to parse as JSON first
-      let error;
-      const contentType = response.headers.get('content-type');
-      
-      if (contentType && contentType.includes('application/json')) {
-        error = await response.json().catch(() => ({ error: 'Failed to parse error response' }));
-      } else {
-        // Not JSON, maybe HTML error page
-        const text = await response.text();
-        console.error(`API ${endpoint}: Non-JSON response:`, text.substring(0, 200));
-        error = { error: `Server error: ${response.status} ${response.statusText}` };
-      }
-      
-      // Handle 401 errors - clear expired/invalid tokens
-      if (response.status === 401) {
-        console.log(`API ${endpoint}: Unauthorized - clearing token`);
-        if (token) {
-          console.log('Clearing expired/invalid token from localStorage');
-          clearStoragePreservingSettings();
-          // Trigger page reload to show login screen
-          setTimeout(() => window.location.reload(), 100);
-        }
-      } else {
-        console.error(`API Error: ${endpoint}`, error);
-      }
-      
-      throw new Error(error.error || `Request failed with status ${response.status}`);
-    }
-
-    const data = await response.json();
-    console.log(`API Data: ${endpoint}`, data);
-    return data;
-  } catch (error: any) {
-    // Network error or other fetch error
-    if (error.message && !error.message.includes('Request failed')) {
-      console.error(`API Network Error: ${endpoint}`, error);
-      throw new Error(`Network error: ${error.message}`);
-    }
-    throw error;
-  }
-}
-
-// Auth APIs
+// Auth APIs - deprecated, используйте /utils/pocketbase/services.ts
 export const authAPI = {
-  signup: (email: string, password: string, username: string) =>
-    fetchAPI('/auth/signup', {
-      method: 'POST',
-      body: JSON.stringify({ email, password, username }),
-    }),
-
-  signin: (email: string, password: string) =>
-    fetchAPI('/auth/signin', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    }),
-
-  getMe: () => fetchAPI('/auth/me'),
-
-  signout: () => 
-    fetchAPI('/auth/signout', {
-      method: 'POST',
-    }),
-
-  updateLastActivity: () =>
-    fetchAPI('/auth/activity', {
-      method: 'POST',
-    }),
-  
-  refreshToken: (refresh_token: string) =>
-    fetchAPI('/auth/refresh', {
-      method: 'POST',
-      body: JSON.stringify({ refresh_token }),
-    }),
-};
-
-// Users APIs
-export const usersAPI = {
-  search: (query: string) => fetchAPI(`/users/search?q=${encodeURIComponent(query)}`),
-
-  getById: (userId: string) => fetchAPI(`/users/${userId}`),
-
-  updateRole: (userId: string, role: User['role']) =>
-    fetchAPI(`/users/${userId}/role`, {
-      method: 'PUT',
-      body: JSON.stringify({ role }),
-    }),
-
-  ban: (userId: string, hours?: number) =>
-    fetchAPI(`/users/${userId}/ban`, {
-      method: 'POST',
-      body: JSON.stringify({ hours }),
-    }),
-
-  unban: (userId: string) =>
-    fetchAPI(`/users/${userId}/unban`, {
-      method: 'POST',
-    }),
-
-  mute: (userId: string, hours?: number) =>
-    fetchAPI(`/users/${userId}/mute`, {
-      method: 'POST',
-      body: JSON.stringify({ hours: hours || 24 }),
-    }),
-
-  unmute: (userId: string) =>
-    fetchAPI(`/users/${userId}/unmute`, {
-      method: 'POST',
-    }),
-
-  addFriend: (userId: string) =>
-    fetchAPI(`/users/${userId}/friend`, {
-      method: 'POST',
-    }),
-
-  removeFriend: (userId: string) =>
-    fetchAPI(`/users/${userId}/friend`, {
-      method: 'DELETE',
-    }),
-
-  getFriends: () => fetchAPI('/users/friends/list'),
-  
-  sendFriendRequest: (userId: string) =>
-    fetchAPI(`/friend-requests/${userId}`, {
-      method: 'POST',
-    }),
-
-  checkFriendRequest: (userId: string) =>
-    fetchAPI(`/friend-requests/${userId}/check`),
-
-  acceptFriendRequest: (requestKey: string) =>
-    fetchAPI(`/friend-requests/${requestKey}/accept`, {
-      method: 'POST',
-    }),
-
-  rejectFriendRequest: (requestKey: string) =>
-    fetchAPI(`/friend-requests/${requestKey}/reject`, {
-      method: 'POST',
-    }),
-
-  changePassword: (oldPassword: string, newPassword: string) =>
-    fetchAPI('/profile/change-password', {
-      method: 'POST',
-      body: JSON.stringify({ oldPassword, newPassword }),
-    }),
-
-  changeEmail: (newEmail: string, password: string) =>
-    fetchAPI('/profile/change-email', {
-      method: 'POST',
-      body: JSON.stringify({ newEmail, password }),
-    }),
-
-  updateProfile: (updates: { display_name?: string; gender?: string; age?: number; interests?: string; privacySettings?: any }) =>
-    fetchAPI('/profile', {
-      method: 'PUT',
-      body: JSON.stringify(updates),
-    }),
-
-  uploadAvatar: async (file: File): Promise<{ user: User; avatarUrl: string }> => {
-    const token = localStorage.getItem('access_token');
-    
-    if (!token) {
-      throw new Error('Authentication required for avatar upload');
-    }
-    
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const headers: HeadersInit = {
-      'Authorization': `Bearer ${token}`
-    };
-
-    console.log('Uploading avatar file:', file.name, file.size, file.type);
-
-    const response = await fetch(`${API_URL}/profile/avatar`, {
-      method: 'POST',
-      headers,
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Upload failed' }));
-      console.error('Avatar upload failed:', error);
-      throw new Error(error.error || 'Upload failed');
-    }
-
-    const result = await response.json();
-    console.log('Avatar upload response:', {
-      avatarUrl: result.avatarUrl?.substring(0, 100) + '...',
-      userHasAvatar: !!result.user?.avatar
-    });
-    
-    return result;
+  signup: async (email: string, password: string, username: string) => {
+    throw new Error('Use PocketBase services instead: import { authService } from "./pocketbase/services"');
   },
-
-  deleteUser: (userId: string) =>
-    fetchAPI(`/users/${userId}/permanent`, {
-      method: 'DELETE',
-    }),
-
-  blockUser: (userId: string) =>
-    fetchAPI(`/users/${userId}/block`, {
-      method: 'POST',
-    }),
-
-  unblockUser: (userId: string) =>
-    fetchAPI(`/users/${userId}/unblock`, {
-      method: 'POST',
-    }),
-
-  // E2EE: Обновить публичный ключ пользователя
-  updatePublicKey: (publicKey: string) =>
-    fetchAPI('/users/public-key', {
-      method: 'PUT',
-      body: JSON.stringify({ publicKey }),
-    }),
-
-  // E2EE: Получить зашифрованный ключ комнаты для текущего пользователя
-  getRoomKey: (roomId: string) =>
-    fetchAPI(`/rooms/${roomId}/key`),
-
-  // E2EE: Сохранить зашифрованные ключи комнаты для участников
-  saveRoomKeys: (roomId: string, encryptedKeys: { [userId: string]: string }) =>
-    fetchAPI(`/rooms/${roomId}/keys`, {
-      method: 'POST',
-      body: JSON.stringify({ encryptedKeys }),
-    }),
+  signin: async (email: string, password: string) => {
+    throw new Error('Use PocketBase services instead: import { authService } from "./pocketbase/services"');
+  },
+  getMe: async () => {
+    throw new Error('Use PocketBase services instead: import { authService } from "./pocketbase/services"');
+  },
+  signout: async () => {
+    throw new Error('Use PocketBase services instead: import { authService } from "./pocketbase/services"');
+  },
+  updateLastActivity: async () => {
+    throw new Error('Use PocketBase services instead: import { authService } from "./pocketbase/services"');
+  },
+  refreshToken: async (refresh_token: string) => {
+    throw new Error('Use PocketBase services instead: import { authService } from "./pocketbase/services"');
+  },
 };
 
-// Admin APIs
+// Users APIs - deprecated
+export const usersAPI = {
+  search: async (query: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  getById: async (userId: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  updateRole: async (userId: string, role: User['role']) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  ban: async (userId: string, hours?: number) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  unban: async (userId: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  mute: async (userId: string, hours?: number) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  unmute: async (userId: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  addFriend: async (userId: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  removeFriend: async (userId: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  getFriends: async () => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  sendFriendRequest: async (userId: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  checkFriendRequest: async (userId: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  acceptFriendRequest: async (requestKey: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  rejectFriendRequest: async (requestKey: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  changePassword: async (oldPassword: string, newPassword: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  changeEmail: async (newEmail: string, password: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  updateProfile: async (updates: { display_name?: string; gender?: string; age?: number; interests?: string; privacySettings?: any }) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  uploadAvatar: async (file: File): Promise<{ user: User; avatarUrl: string }> => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  deleteUser: async (userId: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  blockUser: async (userId: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  unblockUser: async (userId: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  updatePublicKey: async (publicKey: string) => {
+    throw new Error('Use PocketBase services instead: import { userService } from "./pocketbase/services"');
+  },
+  getRoomKey: async (roomId: string) => {
+    throw new Error('Use PocketBase services instead: import { roomService } from "./pocketbase/services"');
+  },
+  saveRoomKeys: async (roomId: string, encryptedKeys: { [userId: string]: string }) => {
+    throw new Error('Use PocketBase services instead: import { roomService } from "./pocketbase/services"');
+  },
+};
+
+// Admin APIs - deprecated
 export const adminAPI = {
-  clearData: () =>
-    fetchAPI('/admin/clear-data', {
-      method: 'POST',
-    }),
+  clearData: async () => {
+    throw new Error('Use PocketBase services instead: import { adminService } from "./pocketbase/services"');
+  },
 };
 
-// Rooms APIs
+// Rooms APIs - deprecated
 export const roomsAPI = {
-  create: (name: string, type: 'public' | 'private') =>
-    fetchAPI('/rooms', {
-      method: 'POST',
-      body: JSON.stringify({ name, type }),
-    }),
-
-  getAll: (godMode?: boolean) => fetchAPI(`/rooms${godMode ? '?godMode=true' : ''}`),
-
-  join: (roomId: string, godMode?: boolean) =>
-    fetchAPI(`/rooms/${roomId}/join${godMode ? '?godMode=true' : ''}`, {
-      method: 'POST',
-    }),
-
-  leave: (roomId: string) =>
-    fetchAPI(`/rooms/${roomId}/leave`, {
-      method: 'POST',
-    }),
-
-  invite: (roomId: string, userId: string) =>
-    fetchAPI(`/rooms/${roomId}/invite`, {
-      method: 'POST',
-      body: JSON.stringify({ userId }),
-    }),
-
-  pinMessage: (roomId: string, messageId: string) =>
-    fetchAPI(`/rooms/${roomId}/pin`, {
-      method: 'POST',
-      body: JSON.stringify({ messageId }),
-    }),
-
-  unpinMessage: (roomId: string) =>
-    fetchAPI(`/rooms/${roomId}/pin`, {
-      method: 'DELETE',
-    }),
-
-  getOrCreateDM: (userId: string) =>
-    fetchAPI('/rooms/dm', {
-      method: 'POST',
-      body: JSON.stringify({ userId }),
-    }),
-
-  markAsRead: (roomId: string, clearMentions?: boolean, clearReactions?: boolean) =>
-    fetchAPI(`/rooms/${roomId}/mark-read`, {
-      method: 'POST',
-      body: JSON.stringify({ clearMentions, clearReactions }),
-    }),
-
-  delete: (roomId: string) =>
-    fetchAPI(`/rooms/${roomId}`, {
-      method: 'DELETE',
-    }),
-
-  cleanupAzkaban: () =>
-    fetchAPI('/admin/cleanup-azkaban', {
-      method: 'POST',
-    }),
-
-  getOrCreateFavorites: () =>
-    fetchAPI('/rooms/favorites', {
-      method: 'POST',
-    }),
+  create: async (name: string, type: 'public' | 'private') => {
+    throw new Error('Use PocketBase services instead: import { roomService } from "./pocketbase/services"');
+  },
+  getAll: async (godMode?: boolean) => {
+    throw new Error('Use PocketBase services instead: import { roomService } from "./pocketbase/services"');
+  },
+  join: async (roomId: string, godMode?: boolean) => {
+    throw new Error('Use PocketBase services instead: import { roomService } from "./pocketbase/services"');
+  },
+  leave: async (roomId: string) => {
+    throw new Error('Use PocketBase services instead: import { roomService } from "./pocketbase/services"');
+  },
+  invite: async (roomId: string, userId: string) => {
+    throw new Error('Use PocketBase services instead: import { roomService } from "./pocketbase/services"');
+  },
+  pinMessage: async (roomId: string, messageId: string) => {
+    throw new Error('Use PocketBase services instead: import { roomService } from "./pocketbase/services"');
+  },
+  unpinMessage: async (roomId: string) => {
+    throw new Error('Use PocketBase services instead: import { roomService } from "./pocketbase/services"');
+  },
+  getOrCreateDM: async (userId: string) => {
+    throw new Error('Use PocketBase services instead: import { roomService } from "./pocketbase/services"');
+  },
+  markAsRead: async (roomId: string, clearMentions?: boolean, clearReactions?: boolean) => {
+    throw new Error('Use PocketBase services instead: import { roomService } from "./pocketbase/services"');
+  },
+  delete: async (roomId: string) => {
+    throw new Error('Use PocketBase services instead: import { roomService } from "./pocketbase/services"');
+  },
+  cleanupAzkaban: async () => {
+    throw new Error('Use PocketBase services instead: import { adminService } from "./pocketbase/services"');
+  },
+  getOrCreateFavorites: async () => {
+    throw new Error('Use PocketBase services instead: import { roomService } from "./pocketbase/services"');
+  },
 };
 
-// Messages APIs
+// Messages APIs - deprecated
 export const messagesAPI = {
-  send: (roomId: string, content: string, type: Message['type'] = 'text', replyTo?: string) =>
-    fetchAPI('/messages', {
-      method: 'POST',
-      body: JSON.stringify({ roomId, content, type, replyTo }),
-    }),
-
-  get: (roomId: string, limit: number = 100, godMode: boolean = false) =>
-    fetchAPI(`/messages/${roomId}?limit=${limit}${godMode ? '&godMode=true' : ''}`),
-
-  edit: (messageId: string, content: string) =>
-    fetchAPI(`/messages/${messageId}`, {
-      method: 'PUT',
-      body: JSON.stringify({ content }),
-    }),
-
-  delete: (messageId: string) =>
-    fetchAPI(`/messages/${messageId}`, {
-      method: 'DELETE',
-    }),
-
-  addReaction: (messageId: string, emoji: string) =>
-    fetchAPI(`/messages/${messageId}/react`, {
-      method: 'POST',
-      body: JSON.stringify({ emoji }),
-    }),
-
-  search: (roomId: string, query: string) =>
-    fetchAPI(`/messages/${roomId}/search?q=${encodeURIComponent(query)}`),
+  send: async (roomId: string, content: string, type: Message['type'] = 'text', replyTo?: string) => {
+    throw new Error('Use PocketBase services instead: import { messageService } from "./pocketbase/services"');
+  },
+  get: async (roomId: string, limit: number = 100, godMode: boolean = false) => {
+    throw new Error('Use PocketBase services instead: import { messageService } from "./pocketbase/services"');
+  },
+  edit: async (messageId: string, content: string) => {
+    throw new Error('Use PocketBase services instead: import { messageService } from "./pocketbase/services"');
+  },
+  delete: async (messageId: string) => {
+    throw new Error('Use PocketBase services instead: import { messageService } from "./pocketbase/services"');
+  },
+  addReaction: async (messageId: string, emoji: string) => {
+    throw new Error('Use PocketBase services instead: import { messageService } from "./pocketbase/services"');
+  },
+  search: async (roomId: string, query: string) => {
+    throw new Error('Use PocketBase services instead: import { messageService } from "./pocketbase/services"');
+  },
 };
 
-// Polls APIs
+// Polls APIs - deprecated
 export const pollsAPI = {
-  create: (roomId: string, question: string, options: string[], anonymous: boolean = false) =>
-    fetchAPI('/polls', {
-      method: 'POST',
-      body: JSON.stringify({ roomId, question, options, anonymous }),
-    }),
-
-  get: (pollId: string) => fetchAPI(`/polls/${pollId}`),
-
-  vote: (pollId: string, optionIndex: number) =>
-    fetchAPI(`/polls/${pollId}/vote`, {
-      method: 'POST',
-      body: JSON.stringify({ optionIndex }),
-    }),
+  create: async (roomId: string, question: string, options: string[], anonymous: boolean = false) => {
+    throw new Error('Use PocketBase services instead: import { pollService } from "./pocketbase/services"');
+  },
+  get: async (pollId: string) => {
+    throw new Error('Use PocketBase services instead: import { pollService } from "./pocketbase/services"');
+  },
+  vote: async (pollId: string, optionIndex: number) => {
+    throw new Error('Use PocketBase services instead: import { pollService } from "./pocketbase/services"');
+  },
 };
 
 // Notifications APIs
@@ -477,47 +299,21 @@ export interface Notification {
 }
 
 export const notificationsAPI = {
-  getAll: () => fetchAPI('/notifications'),
-
-  markAsRead: (notificationId: string) =>
-    fetchAPI(`/notifications/${notificationId}/read`, {
-      method: 'POST',
-    }),
-
-  delete: (notificationId: string) =>
-    fetchAPI(`/notifications/${notificationId}`, {
-      method: 'DELETE',
-    }),
+  getAll: async () => {
+    throw new Error('Use PocketBase services instead: import { notificationService } from "./pocketbase/services"');
+  },
+  markAsRead: async (notificationId: string) => {
+    throw new Error('Use PocketBase services instead: import { notificationService } from "./pocketbase/services"');
+  },
+  delete: async (notificationId: string) => {
+    throw new Error('Use PocketBase services instead: import { notificationService } from "./pocketbase/services"');
+  },
 };
 
-// Storage APIs
+// Storage APIs - deprecated
 export const storageAPI = {
   uploadFile: async (file: File): Promise<{ url: string; path: string }> => {
-    const token = localStorage.getItem('access_token');
-    
-    if (!token) {
-      throw new Error('Authentication required for file upload');
-    }
-    
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const headers: HeadersInit = {
-      'Authorization': `Bearer ${token}`
-    };
-
-    const response = await fetch(`${API_URL}/storage/upload`, {
-      method: 'POST',
-      headers,
-      body: formData,
-    });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Upload failed' }));
-      throw new Error(error.error || 'Upload failed');
-    }
-
-    return await response.json();
+    throw new Error('Use PocketBase services instead: import { storageService } from "./pocketbase/services"');
   },
 };
 
@@ -538,36 +334,22 @@ export interface DirectMessage {
 }
 
 export const dmAPI = {
-  // Создать или получить DM с пользователем
-  create: (userId: string) =>
-    fetchAPI('/dm/create', {
-      method: 'POST',
-      body: JSON.stringify({ userId }),
-    }),
-
-  // Получить список всех DM
-  getAll: () => fetchAPI('/dm/list'),
-
-  // Отправить сообщение в DM
-  sendMessage: (dmId: string, content: string, type: Message['type'] = 'text', replyTo?: string) =>
-    fetchAPI(`/dm/${dmId}/messages`, {
-      method: 'POST',
-      body: JSON.stringify({ content, type, replyTo }),
-    }),
-
-  // Получить сообщения из DM
-  getMessages: (dmId: string, limit: number = 100) =>
-    fetchAPI(`/dm/${dmId}/messages?limit=${limit}`),
-
-  // Отметить DM как прочитанный
-  markAsRead: (dmId: string) =>
-    fetchAPI(`/dm/${dmId}/read`, {
-      method: 'POST',
-    }),
-
-  // Удалить DM (скрыть для пользователя)
-  delete: (dmId: string) =>
-    fetchAPI(`/dm/${dmId}`, {
-      method: 'DELETE',
-    }),
+  create: async (userId: string) => {
+    throw new Error('Use PocketBase services instead: import { dmService } from "./pocketbase/services"');
+  },
+  getAll: async () => {
+    throw new Error('Use PocketBase services instead: import { dmService } from "./pocketbase/services"');
+  },
+  sendMessage: async (dmId: string, content: string, type: Message['type'] = 'text', replyTo?: string) => {
+    throw new Error('Use PocketBase services instead: import { dmService } from "./pocketbase/services"');
+  },
+  getMessages: async (dmId: string, limit: number = 100) => {
+    throw new Error('Use PocketBase services instead: import { dmService } from "./pocketbase/services"');
+  },
+  markAsRead: async (dmId: string) => {
+    throw new Error('Use PocketBase services instead: import { dmService } from "./pocketbase/services"');
+  },
+  delete: async (dmId: string) => {
+    throw new Error('Use PocketBase services instead: import { dmService } from "./pocketbase/services"');
+  },
 };

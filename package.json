@@ -22,6 +22,7 @@
           "@radix-ui/react-toggle": "*",
           "@radix-ui/react-toggle-group": "*",
           "@radix-ui/react-tooltip": "*",
+          "@vitejs/plugin-react": "*",
           "class-variance-authority": "^0.7.1",
           "cmdk": "^1.1.1",
           "embla-carousel-react": "^8.6.0",
@@ -37,7 +38,8 @@
           "react-hook-form": "^7.55.0",
           "react-resizable-panels": "^2.1.7",
           "recharts": "^2.15.2",
-          "vaul": "^1.1.2"
+          "vaul": "^1.1.2",
+          "vite": "*"
       },
       "devDependencies": {
           "@types/node": "^20.10.0",

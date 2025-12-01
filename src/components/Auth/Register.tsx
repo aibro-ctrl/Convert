@@ -5,6 +5,7 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { toast } from '../ui/sonner';
+import { Eye, EyeOff } from 'lucide-react';
 
 interface RegisterProps {
   onSwitchToLogin: () => void;
@@ -16,6 +17,8 @@ export function Register({ onSwitchToLogin }: RegisterProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const isWeakPassword = (password: string): boolean => {
@@ -87,32 +90,28 @@ export function Register({ onSwitchToLogin }: RegisterProps) {
       console.log('Starting registration...');
       await signup(email, password, username);
       console.log('Registration successful, user should be set in context');
-      // Успешная регистрация - пользователь будет автоматически перенаправлен в MainApp
-      // Toast будет показан через useToastListener в MainApp
+      toast.success('Регистрация успешна!', {
+        description: 'Добро пожаловать в Конверт!'
+      });
     } catch (error: any) {
       console.error('Registration error:', error);
       const errorMessage = error.message || 'Ошибка регистрации';
       
       // Check specific error types
-      if (errorMessage.includes('email уже существует') || errorMessage.includes('Пользователь с таким email')) {
+      if (errorMessage.includes('Email уже используется') || errorMessage.includes('email уже существует')) {
         toast.error('Email уже зарегистрирован', {
-          description: 'Этот email уже используется. Попробуйте войти или используйте другой email.'
+          description: 'Этот email уже используется. Попробуйте войти или используйте другой email.',
+          duration: 5000
         });
-      } else if (errorMessage.includes('уже занято') || errorMessage.includes('Имя пользователя')) {
+      } else if (errorMessage.includes('Имя пользователя уже занято') || errorMessage.includes('уже занято')) {
         toast.error('Никнейм занят', {
-          description: 'Это имя пользователя уже используется. Выберите другое имя.'
-        });
-      } else if (errorMessage.includes('неверный') || errorMessage.includes('существует, но пароль')) {
-        toast.error('Email уже зарегистрирован', {
-          description: 'Аккаунт с этим email уже существует. Используйте форму входа.'
-        });
-      } else if (errorMessage.includes('invalid') || errorMessage.includes('Invalid')) {
-        toast.error('Некорректные данные', {
-          description: 'Проверьте правильность введенного email адреса'
+          description: 'Это имя пользователя уже используется. Выберите другое имя.',
+          duration: 5000
         });
       } else {
         toast.error('Ошибка регистрации', {
-          description: errorMessage
+          description: errorMessage,
+          duration: 5000
         });
       }
     } finally {
@@ -137,6 +136,7 @@ export function Register({ onSwitchToLogin }: RegisterProps) {
               onChange={(e) => setUsername(e.target.value)}
               required
               placeholder="username"
+              autoComplete="username"
             />
           </div>
           <div className="space-y-2">
@@ -148,34 +148,67 @@ export function Register({ onSwitchToLogin }: RegisterProps) {
               onChange={(e) => setEmail(e.target.value)}
               required
               placeholder="your@email.com"
+              autoComplete="email"
             />
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">Пароль</Label>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              placeholder="••••••••"
-            />
+            <div className="relative">
+              <Input
+                id="password"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                placeholder="••••••••"
+                autoComplete="new-password"
+                className="pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                tabIndex={-1}
+              >
+                {showPassword ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="confirmPassword">Подтвердите пароль</Label>
-            <Input
-              id="confirmPassword"
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              required
-              placeholder="••••••••"
-            />
+            <div className="relative">
+              <Input
+                id="confirmPassword"
+                type={showConfirmPassword ? "text" : "password"}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                placeholder="••••••••"
+                autoComplete="new-password"
+                className="pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                tabIndex={-1}
+              >
+                {showConfirmPassword ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            </div>
           </div>
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? 'Регистрация...' : 'Зарегистрироваться'}
           </Button>
-          <div className="text-center space-y-2">
+          <div className="text-center">
             <p className="text-sm text-muted-foreground">
               Уже есть аккаунт?{' '}
               <button
@@ -186,13 +219,6 @@ export function Register({ onSwitchToLogin }: RegisterProps) {
                 Войти
               </button>
             </p>
-            
-            {/* Helpful tip about test account */}
-            <div className="mt-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800 text-left">
-              <p className="text-xs text-green-900 dark:text-green-100">
-                💡 <strong>Для быстрого тестирования:</strong> Нажмите на иконку ⚙️ в правом верхнем углу и создайте тестового пользователя
-              </p>
-            </div>
           </div>
         </form>
       </CardContent>

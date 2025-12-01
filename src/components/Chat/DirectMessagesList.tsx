@@ -327,11 +327,11 @@ export function DirectMessagesList({ onSelectDM }: DirectMessagesListProps) {
                             if (content.startsWith('![') && content.includes('](')) {
                               return '🖼️ Изображение';
                             }
-                            // Проверка на URL медиа
-                            if (content.startsWith('https://') && content.includes('supabase.co')) {
-                              if (content.includes('/voice/')) return '🎤 Голосовое сооб��ение';
-                              if (content.includes('/video/')) return '🎥 Видео-кружок';
-                              if (content.includes('/images/')) return '🖼️ Изображение';
+                            // Проверка на URL медиа (PocketBase хранилище)
+                            if (content.startsWith('https://') || content.startsWith('http://')) {
+                              if (content.includes('/voice/') || content.match(/\.(webm|mp3|ogg|wav)$/i)) return '🎤 Голосовое сообщение';
+                              if (content.includes('/video/') || content.match(/\.(mp4|webm|mov)$/i)) return '🎥 Видео-кружок';
+                              if (content.includes('/images/') || content.match(/\.(jpg|jpeg|png|gif|webp)$/i)) return '🖼️ Изображение';
                             }
                             return content.substring(0, 40);
                           })()}
