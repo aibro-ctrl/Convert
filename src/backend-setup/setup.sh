@@ -241,11 +241,85 @@ if [ "$ADMIN_EXISTS" = false ]; then
     read -p "Нажмите Enter после создания администратора..."
 fi
 
-if confirm "Вы уже создали администратора PocketBase?" "y"; then
-    read_input "Email администратора" "" ADMIN_EMAIL
-    read_input "Пароль администратора" "" ADMIN_PASSWORD "password"
+# Функция для ввода и валидации учетных данных администратора
+validate_and_input_admin_credentials() {
+    local max_attempts=3
+    local attempt=1
     
-    ADMIN_CONFIGURED=true
+    while [ $attempt -le $max_attempts ]; do
+        if [ $attempt -gt 1 ]; then
+            print_warning "Попытка $attempt из $max_attempts"
+        fi
+        
+        read_input "Email администратора" "" ADMIN_EMAIL
+        read_input "Пароль администратора" "" ADMIN_PASSWORD "password"
+        
+        # Проверяем что NPM пакеты установлены
+        if [ ! -d "$APP_DIR/backend-setup/node_modules/pocketbase" ]; then
+            print_info "Установка pocketbase для валидации..."
+            cd "$APP_DIR/backend-setup"
+            npm install --no-save pocketbase 2>&1 | grep -v "npm WARN" || true
+        fi
+        
+        # Валидация учетных данных
+        print_info "Проверка учетных данных..."
+        
+        cd "$APP_DIR/backend-setup"
+        local validation_result
+        validation_result=$(node validate-admin.js "$ADMIN_EMAIL" "$ADMIN_PASSWORD" "$POCKETBASE_URL" 2>&1)
+        local validation_status=$?
+        
+        if echo "$validation_result" | grep -q "SUCCESS"; then
+            print_success "✓ Авторизация успешна!"
+            
+            # Показываем информацию об администраторе
+            local admin_info
+            admin_info=$(echo "$validation_result" | tail -n 1)
+            local admin_id
+            admin_id=$(echo "$admin_info" | grep -o '"id":"[^"]*"' | cut -d'"' -f4)
+            
+            if [ -n "$admin_id" ]; then
+                print_info "ID администратора: ${CYAN}${admin_id}${NC}"
+            fi
+            
+            ADMIN_CONFIGURED=true
+            return 0
+        else
+            print_error "✗ Авторизация не удалась"
+            
+            # Показываем детали ��шибки
+            if echo "$validation_result" | grep -q "FAILED"; then
+                local error_msg
+                error_msg=$(echo "$validation_result" | tail -n 1 | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
+                
+                if [ -n "$error_msg" ]; then
+                    print_error "Ошибка: $error_msg"
+                fi
+            fi
+            
+            print_warning "Проверьте правильность email и пароля"
+            print_info "Email должен быть валидным (например: admin@localhost)"
+            print_info "Пароль должен быть минимум 8 символов"
+            
+            attempt=$((attempt + 1))
+            
+            if [ $attempt -le $max_attempts ]; then
+                echo ""
+                if ! confirm "Попробовать снова?" "y"; then
+                    print_error "Невозможно продолжить без валидных учетных данных администратора"
+                    exit 1
+                fi
+            else
+                print_error "Превышено максимальное количество попыток ($max_attempts)"
+                print_info "Убедитесь что администратор создан: ${CYAN}$POCKETBASE_URL/_/${NC}"
+                exit 1
+            fi
+        fi
+    done
+}
+
+if confirm "Вы уже создали администратора PocketBase?" "y"; then
+    validate_and_input_admin_credentials
 else
     print_warning "Создайте администратора перед продолжением"
     print_info "Откройте ${CYAN}$POCKETBASE_URL/_/${NC} в браузере"
@@ -257,10 +331,7 @@ else
     echo ""
     read -p "Нажмите Enter после создания администратора..."
     
-    read_input "Email администратора" "" ADMIN_EMAIL
-    read_input "Пароль администратора" "" ADMIN_PASSWORD "password"
-    
-    ADMIN_CONFIGURED=true
+    validate_and_input_admin_credentials
 fi
 
 # ============================================================================
