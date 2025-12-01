@@ -25,6 +25,8 @@
           "@vitejs/plugin-react": "*",
           "class-variance-authority": "^0.7.1",
           "cmdk": "^1.1.1",
+          "components": "*",
+          "contexts": "*",
           "embla-carousel-react": "^8.6.0",
           "fs": "*",
           "hono": "*",

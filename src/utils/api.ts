@@ -1,5 +1,4 @@
 import pb from './pocketbase/client';
-import { isTokenExpired, clearStoragePreservingSettings } from './tokenUtils';
 
 // Базовая функция для API вызовов (deprecated - используйте PocketBase services)
 // Оставлена для совместимости с модулем достижений
@@ -8,9 +7,9 @@ export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
   
   // Для достижений используем PocketBase напрямую
   // TODO: Переписать систему достижений на PocketBase services
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(options.headers || {}),
+    ...(options.headers as Record<string, string> || {}),
   };
 
   // Используем токен из PocketBase если есть
@@ -54,6 +53,7 @@ export interface User {
   banned?: boolean;
   ban_until?: string; // До какого времени забанен
   muted?: boolean;
+  mute_until?: string; // До какого времени заглушен
   friends?: string[];
   blocked_users?: string[]; // Array of blocked user IDs
   public_key?: string; // RSA публичный ключ для E2EE
@@ -89,9 +89,10 @@ export interface Message {
   sender_display_name?: string; // Отображаемое имя (может быть на русском)
   sender_avatar?: string;
   content: string;
-  type: 'text' | 'audio' | 'video' | 'poll' | 'voice';
+  type: 'text' | 'audio' | 'video' | 'poll' | 'voice' | 'image' | 'file';
   reply_to?: string;
   created_at: string;
+  updated_at?: string;
   reactions?: Record<string, string[]>;
   forwarded?: boolean;
   mentions?: string[];

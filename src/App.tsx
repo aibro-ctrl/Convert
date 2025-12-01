@@ -16,7 +16,9 @@ import { NotificationToast } from './components/Profile/NotificationToast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Toaster, ToastProvider, useToastListener } from './components/ui/sonner';
 import { Badge } from './components/ui/badge';
-import { Room, DirectMessage, roomsAPI, dmAPI, notificationsAPI } from './utils/api';
+import { Room } from './utils/api';
+import type { DirectMessage } from './utils/apiTypes';
+import { roomsAPI, dmAPI, notificationsAPI, usersAPI } from './utils/simpleApi';
 import { MessageCircle, Users, User, WifiOff, Wifi, Mail } from './components/ui/icons';
 import { validateAndCleanToken } from './utils/tokenUtils';
 
@@ -142,16 +144,14 @@ function MainApp() {
                 // Получаем информацию об отправителе
                 const otherUserId = dm.participants.find(id => id !== user.id);
                 if (otherUserId && dm.last_message.sender_id === otherUserId) {
-                  import('./utils/api').then(({ usersAPI }) => {
-                    usersAPI.getById(otherUserId).then(({ user: sender }) => {
-                      window.showNotificationToast?.({
-                        type: 'dm',
-                        from: sender,
-                        content: dm.last_message!.content,
-                        dm: dm,
-                      });
-                    }).catch(console.error);
-                  });
+                  usersAPI.getById(otherUserId).then(({ user: sender }) => {
+                    window.showNotificationToast?.({
+                      type: 'dm',
+                      from: sender,
+                      content: dm.last_message!.content,
+                      dm: dm,
+                    });
+                  }).catch(console.error);
                 }
               }
             }
@@ -173,14 +173,12 @@ function MainApp() {
             if (!sessionStorage.getItem(notifKey)) {
               sessionStorage.setItem(notifKey, 'true');
               
-              import('./utils/api').then(({ usersAPI }) => {
-                usersAPI.getById(notif.from_user_id).then(({ user: sender }) => {
-                  window.showNotificationToast?.({
-                    type: 'friend_request',
-                    from: sender,
-                  });
-                }).catch(console.error);
-              });
+              usersAPI.getById(notif.from_user_id).then(({ user: sender }) => {
+                window.showNotificationToast?.({
+                  type: 'friend_request',
+                  from: sender,
+                });
+              }).catch(console.error);
             }
           }
         });
@@ -290,7 +288,7 @@ function MainApp() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <span className="text-3xl">💬</span>
-              <h1 className="text-xl font-bold">Конверт</h1>
+              <h1 className="text-xl font-bold">Коверт</h1>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">{user.username}</span>
