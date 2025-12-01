@@ -241,6 +241,24 @@ sudo systemctl restart redis-server
 redis-cli -h localhost -p 6379 ping
 ```
 
+### Ошибка "Cannot find module 'pocketbase'":
+
+Эта ошибка возникает если зависимости не установлены. Решение:
+
+```bash
+# Вариант 1: Установите зависимости вручную
+cd backend-setup
+chmod +x install-deps.sh
+./install-deps.sh
+
+# Вариант 2: Или через npm
+cd backend-setup
+npm install pocketbase ioredis dotenv
+
+# Затем повторите установку
+./setup.sh
+```
+
 ### Коллекции не создаются:
 
 ```bash

@@ -160,26 +160,26 @@ if [ "$POCKETBASE_RUNNING" = false ]; then
     echo ""
 fi
 
-# 5. Создание коллекций PocketBase
-print_header "5. Создание коллекций в PocketBase"
-
-cd "$APP_DIR/backend-setup"
-node create-collections.js
-
-# 6. Установка зависимостей
-print_header "6. Установка зависимостей"
+# 5. Установка зависимостей (ПЕРЕД созданием коллекций)
+print_header "5. Установка зависимостей"
 
 cd "$APP_DIR"
 
 if [ ! -f "package.json" ]; then
-    print_error "package.json не найден в $APP_DIR"
-    exit 1
+    print_warning "package.json не найден в $APP_DIR, используем backend-setup/package.json"
+    cd "$APP_DIR/backend-setup"
 fi
 
 print_info "Установка NPM пакетов..."
-npm install pocketbase ioredis dotenv
+npm install --no-save pocketbase ioredis dotenv 2>&1 | grep -v "npm WARN" || true
 
 print_success "Зависимости установлены"
+
+# 6. Создание коллекций PocketBase
+print_header "6. Создание коллекций в PocketBase"
+
+cd "$APP_DIR/backend-setup"
+node create-collections.js
 
 # 7. Создание systemd сервисов
 print_header "7. Создание systemd сервисов"
