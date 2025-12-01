@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Скрипт автоматического обновления фронтенд приложения Конверт из GitHub
+# Скачивает новые файлы из репозитория и обновляет локальную копию
 # Использование: ./update.sh [--force] [--no-build] [--dry-run]
 
 set -e  # Остановка при ошибках
@@ -32,6 +33,7 @@ EXCLUDE_PATTERNS=(
     "pocketbase"
     "pb_data"
     "update.sh"
+    ".git"
 )
 
 # Файлы, которые нужно обязательно сохранить
@@ -121,23 +123,26 @@ fi
 cd "$APP_DIR"
 
 log_info "╔════════════════════════════════════════════════════════╗"
-log_info "║   Обновление фронтенд приложения Конверт из GitHub    ║"
+log_info "║   Скачивание обновлений из GitHub репозитория         ║"
 log_info "╚════════════════════════════════════════════════════════╝"
 echo ""
 log_info "Репозиторий: $GITHUB_REPO"
 log_info "Ветка: $GITHUB_BRANCH"
-log_info "Директория: $APP_DIR"
+log_info "Локальная директория: $APP_DIR"
 echo ""
 
-# Проверка изменений в репозитории
-log_info "Проверка доступности репозитория..."
+# Проверка доступности репозитория
+log_info "Проверка доступности GitHub репозитория..."
 if ! git ls-remote "$GITHUB_REPO" &> /dev/null; then
     log_error "Не удалось подключиться к репозиторию: $GITHUB_REPO"
+    log_error "Проверьте подключение к интернету и доступность репозитория"
     exit 1
 fi
 
+log_success "Репозиторий доступен"
+
 # Клонирование репозитория во временную директорию
-log_info "Клонирование репозитория во временную директорию..."
+log_info "Скачивание последней версии из GitHub..."
 git clone --depth 1 --branch "$GITHUB_BRANCH" "$GITHUB_REPO" "$TMP_DIR" > /dev/null 2>&1
 
 if [ ! -d "$TMP_DIR" ]; then
@@ -147,7 +152,9 @@ fi
 
 # Получение хеша последнего коммита
 REMOTE_COMMIT=$(cd "$TMP_DIR" && git rev-parse HEAD)
+REMOTE_COMMIT_MSG=$(cd "$TMP_DIR" && git log -1 --pretty=%B)
 log_info "Последний коммит в GitHub: ${REMOTE_COMMIT:0:7}"
+log_info "Сообщение коммита: $REMOTE_COMMIT_MSG"
 
 # Проверка наличия .git в текущей директории
 if [ -d ".git" ]; then
@@ -159,14 +166,17 @@ if [ -d ".git" ]; then
         exit 0
     fi
 else
-    log_warning "Директория не является git репозиторием. Инициализация..."
-    git init > /dev/null
-    git remote add origin "$GITHUB_REPO" 2>/dev/null || git remote set-url origin "$GITHUB_REPO"
+    log_info "Локальный git репозиторий не найден, будет выполнено полное обновление"
+    LOCAL_COMMIT="unknown"
 fi
 
 # Создание бэкапа важных файлов
 log_info "Создание бэкапа текущих файлов..."
-mkdir -p "$BACKUP_DIR"
+if ! mkdir -p "$BACKUP_DIR" 2>/dev/null; then
+    log_error "Нет прав для создания бэкапа в: $BACKUP_DIR"
+    log_error "Запустите скрипт с sudo или измените права на директорию"
+    exit 1
+fi
 
 for file in "${PRESERVE_FILES[@]}"; do
     if [ -f "$file" ]; then
@@ -247,13 +257,13 @@ if [ "$FORCE_UPDATE" = false ]; then
     fi
 fi
 
-# Копирование файлов
-log_info "Копирование обновленных файлов..."
+# Копирование файлов из GitHub в локальную директорию
+log_info "Применение обновлений из GitHub..."
 rsync -av --delete \
     $(for pattern in "${EXCLUDE_PATTERNS[@]}"; do echo "--exclude=$pattern"; done) \
     "$TMP_DIR/" "$APP_DIR/" > /dev/null
 
-log_success "Файлы успешно скопированы"
+log_success "Файлы из GitHub успешно применены"
 
 # Восстановление сохраненных файлов
 log_info "Восстановление локальных конфигураций..."
@@ -264,10 +274,14 @@ for file in "${PRESERVE_FILES[@]}"; do
     fi
 done
 
-# Обновление git репозитория
-log_info "Обновление git метаданных..."
-git fetch origin "$GITHUB_BRANCH" > /dev/null 2>&1
-git reset --hard "origin/$GITHUB_BRANCH" > /dev/null 2>&1
+# Обновление git метаданных (только если .git существует и доступен)
+if [ -d ".git" ] && [ -w ".git" ]; then
+    log_info "Обновление git метаданных..."
+    git fetch origin "$GITHUB_BRANCH" > /dev/null 2>&1 || true
+    git reset --hard "origin/$GITHUB_BRANCH" > /dev/null 2>&1 || true
+else
+    log_info "Git метаданные пропущены (нет прав или репозитория)"
+fi
 
 # Проверка package.json изменений
 if [ -f "$BACKUP_DIR/package.json" ]; then
@@ -303,6 +317,7 @@ fi
 cat > "$APP_DIR/update-info.txt" << EOF
 Последнее обновление: $(date '+%Y-%m-%d %H:%M:%S')
 Коммит: $REMOTE_COMMIT
+Сообщение коммита: $REMOTE_COMMIT_MSG
 Репозиторий: $GITHUB_REPO
 Ветка: $GITHUB_BRANCH
 Новых файлов: $NEW_FILES
@@ -312,8 +327,13 @@ EOF
 
 echo ""
 log_success "╔════════════════════════════════════════════════════════╗"
-log_success "║        Обновление успешно завершено!                  ║"
+log_success "║   Обновление из GitHub успешно завершено!             ║"
 log_success "╚════════════════════════════════════════════════════════╝"
+echo ""
+log_info "Скачано из GitHub:"
+log_info "  • Новых файлов: $NEW_FILES"
+log_info "  • Измененных файлов: $CHANGED_FILES"
+log_info "  • Удаленных файлов: $DELETED_FILES"
 echo ""
 log_info "Информация об обновлении сохранена в update-info.txt"
 log_info "Бэкап сохранен в: $BACKUP_DIR"
