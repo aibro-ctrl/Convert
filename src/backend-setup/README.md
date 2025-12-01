@@ -19,75 +19,36 @@
 
 ## 🚀 Быстрый старт
 
-### Автоматическая установка (рекомендуется):
+### 1. Установка зависимостей
 
 ```bash
 cd backend-setup
-chmod +x setup.sh
-./setup.sh
-```
-
-Скрипт автоматически:
-1. ✅ Проверит PocketBase и Redis
-2. ✅ Создаст коллекции в PocketBase
-3. ✅ Настроит Redis кэширование
-4. ✅ Сгенерирует конфигурацию
-5. ✅ Создаст systemd сервисы
-6. ✅ Протестирует подключения
-
-**Время установки:** ~5 минут
-
-## 📁 Структура файлов
-
-```
-backend-setup/
-├── setup.sh                # Основной скрипт установки
-├── create-collections.js   # Создание коллекций PocketBase
-├── redis-cache.js          # Redis Cache Manager
-├── test-connection.js      # Тест подключений
-└── README.md              # Этот файл
-```
-
-## 🔧 Ручная установка
-
-### Шаг 1: Проверка PocketBase
-
-```bash
-# Проверьте установку
-which pocketbase
-# или
-ls -la /opt/pocketbase/pocketbase
-
-# Запустите PocketBase
-cd /opt/pocketbase
-./pocketbase serve --http=0.0.0.0:8090
-
-# В другом терминале проверьте
-curl http://localhost:8090/api/health
-```
-
-### Шаг 2: Проверка Redis
-
-```bash
-# Проверьте установку
-redis-cli --version
-
-# Проверьте работу
-redis-cli ping
-# Должен ответить: PONG
-
-# Проверьте статус
-sudo systemctl status redis-server
-```
-
-### Шаг 3: Установка зависимостей
-
-```bash
-cd /path/to/konvert-chat
 npm install pocketbase ioredis dotenv
+# или используйте скрипт:
+# ./install-deps.sh
 ```
 
-### Шаг 4: Создание коллекций
+### 2. Настройка окружения
+
+Создайте `.env` файл с настройками вашего PocketBase и Redis:
+
+```bash
+# Интерактивная настройка:
+chmod +x configure.sh
+./configure.sh
+
+# Или создайте .env вручную:
+cat > .env << 'EOF'
+VITE_POCKETBASE_URL=http://127.0.0.1:54739
+VITE_REDIS_HOST=localhost
+VITE_REDIS_PORT=6379
+VITE_REDIS_DB=0
+EOF
+```
+
+**Важно:** Укажите правильный URL вашего PocketBase!
+
+### 3. Создание коллекций
 
 ```bash
 cd backend-setup
@@ -103,32 +64,7 @@ node create-collections.js
 - ✅ friend_requests
 - ✅ files
 
-### Шаг 5: Конфигурация
-
-Создайте `.env` файл в корне проекта:
-
-```env
-# Backend Type
-VITE_BACKEND_TYPE=pocketbase
-
-# PocketBase
-VITE_POCKETBASE_URL=http://localhost:8090
-
-# Redis
-VITE_REDIS_HOST=localhost
-VITE_REDIS_PORT=6379
-VITE_REDIS_DB=0
-
-# Security
-JWT_SECRET=your_random_secret_here
-ENCRYPTION_KEY=your_encryption_key_here
-
-# Features
-VITE_E2EE_ENABLED=true
-VITE_REALTIME_ENABLED=true
-```
-
-### Шаг 6: Создание systemd сервиса
+### 4. Создание systemd сервиса
 
 ```bash
 sudo nano /etc/systemd/system/konvert-pocketbase.service

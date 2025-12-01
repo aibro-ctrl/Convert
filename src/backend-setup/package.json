@@ -4,6 +4,7 @@
   "description": "Native backend setup for Konvert Chat (PocketBase + Redis, no Docker)",
   "scripts": {
     "setup": "bash setup.sh",
+    "configure": "bash configure.sh",
     "install-deps": "bash install-deps.sh",
     "test-imports": "node test-imports.js",
     "create-collections": "node create-collections.js",
