@@ -287,7 +287,7 @@ validate_and_input_admin_credentials() {
         else
             print_error "✗ Авторизация не удалась"
             
-            # Показываем детали ��шибки
+            # Показываем детали ошибки
             if echo "$validation_result" | grep -q "FAILED"; then
                 local error_msg
                 error_msg=$(echo "$validation_result" | tail -n 1 | grep -o '"message":"[^"]*"' | cut -d'"' -f4)
@@ -520,57 +520,22 @@ fi
 if [ "$POCKETBASE_RUNNING" = true ] && [ "$ADMIN_CONFIGURED" = true ]; then
     print_step "Создание коллекций PocketBase"
     
-    # Создаем временный скрипт с автоматической авторизацией
-    cat > "$APP_DIR/backend-setup/auto-create-collections.js" << 'EOFSCRIPT'
-const PocketBase = require('pocketbase').default || require('pocketbase');
-require('dotenv').config();
-
-const POCKETBASE_URL = process.env.VITE_POCKETBASE_URL;
-const ADMIN_EMAIL = process.env.POCKETBASE_ADMIN_EMAIL;
-const ADMIN_PASSWORD = process.env.POCKETBASE_ADMIN_PASSWORD;
-
-async function main() {
-    const pb = new PocketBase(POCKETBASE_URL);
-    
-    try {
-        // Авторизация
-        await pb.admins.authWithPassword(ADMIN_EMAIL, ADMIN_PASSWORD);
-        console.log('✓ Авторизация успешна');
-        
-        // Загружаем основной скрипт создания коллекций
-        const { createCollections } = require('./create-collections.js');
-        await createCollections();
-        
-    } catch (error) {
-        console.error('✗ Ошибка:', error.message);
-        process.exit(1);
-    }
-}
-
-main();
-EOFSCRIPT
-    
-    # Патчим create-collections.js чтобы использовать токен из переменной окружения
-    cat > "$APP_DIR/backend-setup/create-collections-patched.js" << 'EOFSCRIPT'
-#!/usr/bin/env node
-
-const PocketBase = require('pocketbase').default || require('pocketbase');
-require('dotenv').config();
-
-const POCKETBASE_URL = process.env.VITE_POCKETBASE_URL || 'http://127.0.0.1:54739';
-const ADMIN_EMAIL = process.env.POCKETBASE_ADMIN_EMAIL;
-const ADMIN_PASSWORD = process.env.POCKETBASE_ADMIN_PASSWORD;
-EOFSCRIPT
-    
-    # Добавляем остальную часть из оригинального файла
-    tail -n +12 "$APP_DIR/backend-setup/create-collections.js" | sed '/const readline = require/,/rl.close();/d' | sed 's/await pb.admins.authWithPassword(email, password);/await pb.admins.authWithPassword(ADMIN_EMAIL, ADMIN_PASSWORD);/' >> "$APP_DIR/backend-setup/create-collections-patched.js"
-    
     if confirm "Создать коллекции в PocketBase сейчас?" "y"; then
-        node create-collections-patched.js
-        rm -f create-collections-patched.js auto-create-collections.js
+        cd "$APP_DIR/backend-setup"
+        
+        # Используем оригинальный скрипт create-collections.js
+        # который уже использует правильный endpoint для PocketBase v0.20+
+        # Учетные данные берутся из .env файла
+        node create-collections.js
+        
+        if [ $? -eq 0 ]; then
+            print_success "Коллекции созданы успешно"
+        else
+            print_error "Ошибка при создании коллекций"
+            print_info "Попробуйте запустить вручную: cd backend-setup && node create-collections.js"
+        fi
     else
         print_info "Запустите позже: cd backend-setup && node create-collections.js"
-        rm -f create-collections-patched.js auto-create-collections.js
     fi
 else
     print_warning "Пропуск создания коллекций (PocketBase недоступен или не настроен)"
