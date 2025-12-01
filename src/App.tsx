@@ -19,8 +19,6 @@ import { Badge } from './components/ui/badge';
 import { Room, DirectMessage, roomsAPI, dmAPI, notificationsAPI } from './utils/api';
 import { MessageCircle, Users, User, WifiOff, Wifi, Mail } from './components/ui/icons';
 import { validateAndCleanToken } from './utils/tokenUtils';
-import logoEnvelope from 'figma:asset/28456c23b87e910377ba6ff1bfaf8a2b2f85670a.png';
-import logoText from 'figma:asset/358c3d7b52371e48c9dc5b2ec3f5b14609eb7b5e.png';
 
 // Validate token on app startup - this runs before React renders
 validateAndCleanToken();
@@ -291,8 +289,8 @@ function MainApp() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-              <img src={logoEnvelope} alt="Конверт" className="h-8 w-auto" />
-              <img src={logoText} alt="Конверт" className="h-8 w-auto" />
+              <span className="text-3xl">💬</span>
+              <h1 className="text-xl font-bold">Конверт</h1>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">{user.username}</span>

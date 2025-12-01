@@ -190,6 +190,14 @@ class PocketBaseClient {
       // Unsubscribe
       unsubscribe: () => {
         console.log('Unsubscribe called');
+      },
+      
+      // Request password reset
+      requestPasswordReset: async (email: string) => {
+        return this.request(`/collections/${name}/request-password-reset`, {
+          method: 'POST',
+          body: JSON.stringify({ email })
+        });
       }
     };
   }

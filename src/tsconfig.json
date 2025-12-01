@@ -30,8 +30,9 @@
     "types": ["vite/client"]
   },
   "include": [
-    "*.ts",
-    "*.tsx",
+    "main.tsx",
+    "App.tsx",
+    "vite-env.d.ts",
     "components/**/*.ts",
     "components/**/*.tsx",
     "contexts/**/*.ts",
@@ -43,7 +44,9 @@
     "node_modules",
     "dist",
     "backend-setup",
-    "backend-adapter"
+    "backend-adapter",
+    "vite.config.ts",
+    "tsconfig.node.json"
   ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
