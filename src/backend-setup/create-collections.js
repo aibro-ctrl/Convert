@@ -267,6 +267,52 @@ async function createCollections() {
     process.exit(1);
   }
 
+  // Авторизация администратора
+  console.log('🔐 Авторизация администратора...');
+  
+  let email, password;
+  
+  // Проверяем переменные окружения
+  if (process.env.POCKETBASE_ADMIN_EMAIL && process.env.POCKETBASE_ADMIN_PASSWORD) {
+    email = process.env.POCKETBASE_ADMIN_EMAIL;
+    password = process.env.POCKETBASE_ADMIN_PASSWORD;
+    console.log('Используются учетные данные из .env файла');
+  } else {
+    // Интерактивный ввод
+    console.log('Введите email и пароль администратора PocketBase');
+    
+    const readline = require('readline');
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    email = await new Promise(resolve => {
+      rl.question('Email администратора: ', resolve);
+    });
+
+    password = await new Promise(resolve => {
+      rl.question('Пароль: ', (answer) => {
+        resolve(answer);
+      });
+    });
+
+    rl.close();
+  }
+
+  try {
+    await pb.admins.authWithPassword(email, password);
+    console.log('✓ Авторизация успешна\n');
+  } catch (error) {
+    console.error('✗ Ошибка авторизации:', error.message);
+    console.error('\n📝 Как создать администратора:');
+    console.error('  1. Откройте в браузере: ' + POCKETBASE_URL + '/_/');
+    console.error('  2. Заполните форму создания администратора');
+    console.error('  3. Запомните email и пароль');
+    console.error('  4. Запустите этот скрипт снова\n');
+    process.exit(1);
+  }
+
   let created = 0;
   let exists = 0;
   let errors = 0;
@@ -352,7 +398,7 @@ async function createCollections() {
   console.log('\n' + '='.repeat(50));
   console.log('✅ Создание коллекций завершено!');
   console.log('='.repeat(50));
-  console.log(`Создано:     ${created}`);
+  console.log(`Создно:     ${created}`);
   console.log(`Существует:  ${exists}`);
   console.log(`Ошибок:      ${errors}`);
   console.log('='.repeat(50) + '\n');

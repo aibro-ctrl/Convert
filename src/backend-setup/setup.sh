@@ -1,101 +1,377 @@
 #!/bin/bash
 
 ###############################################################################
-# Скрипт полной установки backend для чата "Конверт"
+# Интерактивный скрипт установки backend для чата "Конверт"
 # Для Ubuntu сервера с PocketBase и Redis (БЕЗ Docker)
 ###############################################################################
 
 set -e
+
+# Показать помощь
+if [[ "$1" == "--help" ]] || [[ "$1" == "-h" ]]; then
+    cat << EOF
+Интерактивный скрипт установки Konvert Chat
+
+ИСПОЛЬЗОВАНИЕ:
+    ./setup.sh
+
+ОПИСАНИЕ:
+    Скрипт автоматически:
+    - Проверит PocketBase и Redis
+    - Запросит все необходимые настройки
+    - Создаст .env файлы
+    - Установит зависимости
+    - Создаст коллекции в PocketBase
+    - Протестирует подключения
+
+ТРЕБОВАНИЯ:
+    - Node.js 18+
+    - PocketBase (должен быть установлен)
+    - Redis (должен быть установлен)
+
+ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ (опционально):
+    POCKETBASE_HOST     - Хост PocketBase (по умолчанию: 127.0.0.1)
+    POCKETBASE_PORT     - Порт PocketBase (по умолчанию: 54739)
+    REDIS_HOST          - Хост Redis (по умолчанию: localhost)
+    REDIS_PORT          - Порт Redis (по умолчанию: 6379)
+
+ПРИМЕРЫ:
+    # Обычная установка
+    ./setup.sh
+
+    # С переменными окружения
+    POCKETBASE_PORT=8090 ./setup.sh
+
+ДОКУМЕНТАЦИЯ:
+    Подробнее: https://github.com/your-username/konvert-chat
+
+EOF
+    exit 0
+fi
 
 # Цвета
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+MAGENTA='\033[0;35m'
 NC='\033[0m'
 
 print_success() { echo -e "${GREEN}✓${NC} $1"; }
 print_error() { echo -e "${RED}✗${NC} $1"; }
 print_warning() { echo -e "${YELLOW}⚠${NC} $1"; }
 print_info() { echo -e "${BLUE}ℹ${NC} $1"; }
-print_header() { echo -e "\n${BLUE}===${NC} $1 ${BLUE}===${NC}\n"; }
+print_header() { echo -e "\n${MAGENTA}╔════════════════════════════════════════════════════╗${NC}"; echo -e "${MAGENTA}║${NC}  $1"; echo -e "${MAGENTA}╚════════════════════════════════════════════════════╝${NC}\n"; }
+print_step() { echo -e "\n${CYAN}▶${NC} ${BLUE}$1${NC}\n"; }
 
-# Конфигурация (можно изменить)
-POCKETBASE_DIR="${POCKETBASE_DIR:-/opt/pocketbase}"
-POCKETBASE_PORT="${POCKETBASE_PORT:-54739}"
-REDIS_HOST="${REDIS_HOST:-localhost}"
-REDIS_PORT="${REDIS_PORT:-6379}"
-APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Функция для чтения пользовательского ввода с дефолтным значением
+read_input() {
+    local prompt="$1"
+    local default="$2"
+    local var_name="$3"
+    local is_password="$4"
+    
+    if [ -n "$default" ]; then
+        prompt="$prompt [${GREEN}$default${NC}]"
+    fi
+    
+    echo -ne "${CYAN}?${NC} $prompt: "
+    
+    if [ "$is_password" = "password" ]; then
+        read -s input
+        echo ""
+    else
+        read input
+    fi
+    
+    if [ -z "$input" ]; then
+        eval "$var_name='$default'"
+    else
+        eval "$var_name='$input'"
+    fi
+}
 
-print_header "🚀 Установка Backend для чата 'Конверт'"
-echo "PocketBase: $POCKETBASE_DIR"
-echo "Redis: $REDIS_HOST:$REDIS_PORT"
-echo "App: $APP_DIR"
-echo ""
+# Функция для подтверждения
+confirm() {
+    local prompt="$1"
+    local default="${2:-n}"
+    
+    if [ "$default" = "y" ]; then
+        prompt="$prompt [${GREEN}Y${NC}/n]"
+    else
+        prompt="$prompt [y/${RED}N${NC}]"
+    fi
+    
+    echo -ne "${CYAN}?${NC} $prompt: "
+    read -r response
+    
+    if [ -z "$response" ]; then
+        response="$default"
+    fi
+    
+    case "$response" in
+        [yY][eE][sS]|[yY]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
-# Проверка прав
-if [ "$EUID" -ne 0 ]; then 
-    print_warning "Скрипт запущен без sudo, некоторые операции могут потребовать пароль"
-fi
-
-# 1. Проверка установки PocketBase
-print_header "1. Проверка PocketBase"
-
-if [ ! -f "$POCKETBASE_DIR/pocketbase" ]; then
-    print_error "PocketBase не найден в $POCKETBASE_DIR"
-    print_info "Установите PocketBase:"
-    echo "  wget https://github.com/pocketbase/pocketbase/releases/download/v0.22.0/pocketbase_0.22.0_linux_amd64.zip"
-    echo "  unzip pocketbase_0.22.0_linux_amd64.zip -d $POCKETBASE_DIR"
-    exit 1
-fi
-print_success "PocketBase найден"
-
-# Проверка запущен ли PocketBase
-if pgrep -x "pocketbase" > /dev/null; then
-    print_success "PocketBase уже запущен"
-    POCKETBASE_RUNNING=true
-else
-    print_warning "PocketBase не запущен"
-    POCKETBASE_RUNNING=false
-fi
-
-# 2. Проверка Redis
-print_header "2. Проверка Redis"
-
-if ! command -v redis-cli &> /dev/null; then
-    print_error "Redis CLI не найден"
-    print_info "Установите Redis:"
-    echo "  sudo apt update"
-    echo "  sudo apt install redis-server"
-    exit 1
-fi
-print_success "Redis CLI установлен"
-
-# Проверка работает ли Redis
-if redis-cli -h $REDIS_HOST -p $REDIS_PORT ping &> /dev/null; then
-    print_success "Redis работает"
-else
-    print_error "Redis не отвечает на $REDIS_HOST:$REDIS_PORT"
-    print_info "Запустите Redis:"
-    echo "  sudo systemctl start redis-server"
-    exit 1
-fi
-
-# 3. Генерация конфигурации
-print_header "3. Генерация конфигурации"
-
-# Генерация случайных ключей
+# Генерация случайного ключа
 generate_random() {
     openssl rand -base64 32 | tr -d "=+/" | cut -c1-32
 }
 
+# Баннер
+clear
+echo -e "${MAGENTA}"
+cat << "EOF"
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║   ██╗  ██╗ ██████╗ ███╗   ██╗██╗   ██╗███████╗██████╗ ████████╗
+║   ██║ ██╔╝██╔═══██╗████╗  ██║██║   ██║██╔════╝██╔══██╗╚══██╔══╝
+║   █████╔╝ ██║   ██║██╔██╗ ██║██║   ██║█████╗  ██████╔╝   ██║   
+║   ██╔═██╗ ██║   ██║██║╚██╗██║╚██╗ ██╔╝██╔══╝  ██╔══██╗   ██║   
+║   ██║  ██╗╚██████╔╝██║ ╚████║ ╚████╔╝ ███████╗██║  ██║   ██║   
+║   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝   ╚═╝   
+║                                                              ║
+║                  Интерактивная установка                     ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+EOF
+echo -e "${NC}"
+
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+print_info "Этот скрипт поможет вам настроить backend для чата Конверт"
+print_info "Путь к приложению: ${CYAN}$APP_DIR${NC}"
+echo ""
+
+# ============================================================================
+# ШАГ 1: Сбор информации о PocketBase
+# ============================================================================
+print_header "Шаг 1: Настройка PocketBase"
+
+read_input "Хост PocketBase" "${POCKETBASE_HOST:-127.0.0.1}" POCKETBASE_HOST
+read_input "Порт PocketBase" "${POCKETBASE_PORT:-54739}" POCKETBASE_PORT
+POCKETBASE_URL="http://${POCKETBASE_HOST}:${POCKETBASE_PORT}"
+
+print_info "Проверка доступности PocketBase на ${CYAN}$POCKETBASE_URL${NC}..."
+
+if curl -s -f "$POCKETBASE_URL/api/health" > /dev/null 2>&1; then
+    print_success "PocketBase доступен"
+    POCKETBASE_RUNNING=true
+else
+    print_warning "PocketBase не отвечает на $POCKETBASE_URL"
+    POCKETBASE_RUNNING=false
+    
+    if confirm "Хотите указать путь к директории PocketBase для автозапуска?" "y"; then
+        read_input "Путь к директории PocketBase" "/opt/pocketbase" POCKETBASE_DIR
+        
+        if [ -f "$POCKETBASE_DIR/pocketbase" ]; then
+            print_success "PocketBase найден в $POCKETBASE_DIR"
+            
+            if confirm "Запустить PocketBase сейчас?" "y"; then
+                print_info "Запуск PocketBase..."
+                cd "$POCKETBASE_DIR"
+                nohup ./pocketbase serve --http="${POCKETBASE_HOST}:${POCKETBASE_PORT}" > pocketbase.log 2>&1 &
+                POCKETBASE_PID=$!
+                print_success "PocketBase запущен (PID: $POCKETBASE_PID)"
+                
+                # Ждем запуска
+                print_info "Ожидание готовности PocketBase..."
+                for i in {1..30}; do
+                    if curl -s -f "$POCKETBASE_URL/api/health" > /dev/null 2>&1; then
+                        print_success "PocketBase готов к работе"
+                        POCKETBASE_RUNNING=true
+                        break
+                    fi
+                    echo -n "."
+                    sleep 1
+                done
+                echo ""
+            fi
+        else
+            print_error "PocketBase не найден в $POCKETBASE_DIR"
+            print_info "Установите PocketBase и запустите скрипт снова"
+            exit 1
+        fi
+    else
+        print_warning "Убедитесь что PocketBase запущен перед продолжением"
+        if ! confirm "Продолжить установку?" "y"; then
+            exit 0
+        fi
+    fi
+fi
+
+# ============================================================================
+# ШАГ 2: Авторизация в PocketBase
+# ============================================================================
+print_header "Шаг 2: Авторизация в PocketBase"
+
+print_info "Для создания коллекций требуется администратор PocketBase"
+print_info "Если вы еще не создали администратора, откройте:"
+print_info "${CYAN}$POCKETBASE_URL/_/${NC}"
+echo ""
+
+if confirm "Вы уже создали администратора PocketBase?" "y"; then
+    read_input "Email администратора" "" ADMIN_EMAIL
+    read_input "Пароль администратора" "" ADMIN_PASSWORD "password"
+    
+    ADMIN_CONFIGURED=true
+else
+    print_warning "Создайте администратора перед продолжением"
+    print_info "Откройте ${CYAN}$POCKETBASE_URL/_/${NC} в браузере"
+    
+    if confirm "Открыть URL в браузере? (требует xdg-open)" "n"; then
+        xdg-open "$POCKETBASE_URL/_/" 2>/dev/null || print_warning "Не удалось открыть браузер"
+    fi
+    
+    echo ""
+    read -p "Нажмите Enter после создания администратора..."
+    
+    read_input "Email администратора" "" ADMIN_EMAIL
+    read_input "Пароль администратора" "" ADMIN_PASSWORD "password"
+    
+    ADMIN_CONFIGURED=true
+fi
+
+# ============================================================================
+# ШАГ 3: Настройка Redis
+# ============================================================================
+print_header "Шаг 3: Настройка Redis"
+
+read_input "Хост Redis" "${REDIS_HOST:-localhost}" REDIS_HOST
+read_input "Порт Redis" "${REDIS_PORT:-6379}" REDIS_PORT
+read_input "База данных Redis" "0" REDIS_DB
+
+print_info "Проверка подключения к Redis..."
+
+if command -v redis-cli &> /dev/null; then
+    if redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping > /dev/null 2>&1; then
+        print_success "Redis доступен на ${REDIS_HOST}:${REDIS_PORT}"
+        REDIS_RUNNING=true
+    else
+        print_error "Redis не отвечает на ${REDIS_HOST}:${REDIS_PORT}"
+        print_info "Запустите Redis: sudo systemctl start redis-server"
+        REDIS_RUNNING=false
+        
+        if ! confirm "Продолжить без Redis? (не рекомендуется)" "n"; then
+            exit 1
+        fi
+    fi
+else
+    print_warning "redis-cli не установлен"
+    print_info "Установите Redis: sudo apt install redis-server"
+    REDIS_RUNNING=false
+fi
+
+# ============================================================================
+# ШАГ 4: Feature Flags
+# ============================================================================
+print_header "Шаг 4: Настройка функционала"
+
+print_info "Включите нужные функции (по умолчанию все включены):"
+echo ""
+
+confirm "Включить E2EE шифрование?" "y" && E2EE_ENABLED=true || E2EE_ENABLED=false
+confirm "Включить real-time обновления?" "y" && REALTIME_ENABLED=true || REALTIME_ENABLED=false
+confirm "Включить загрузку файлов?" "y" && FILE_UPLOAD_ENABLED=true || FILE_UPLOAD_ENABLED=false
+confirm "Включить голосовые/видео сообщения?" "y" && VOICE_VIDEO_ENABLED=true || VOICE_VIDEO_ENABLED=false
+confirm "Включить режим 'Глаз Бога' (только для первого пользователя)?" "y" && GOD_MODE_ENABLED=true || GOD_MODE_ENABLED=false
+confirm "Включить систему достижений?" "y" && ACHIEVEMENTS_ENABLED=true || ACHIEVEMENTS_ENABLED=false
+
+# ============================================================================
+# ШАГ 5: Генерация ключей безопасности
+# ============================================================================
+print_header "Шаг 5: Генерация ключей безопасности"
+
+print_info "Генерация JWT и ключей шифрования..."
+
 JWT_SECRET=$(generate_random)
 ENCRYPTION_KEY=$(generate_random)
 
-# Создание .env файла
-cat > "$APP_DIR/.env" << EOF
+print_success "JWT Secret сгенерирован: ${GREEN}${JWT_SECRET:0:10}...${NC}"
+print_success "Encryption Key сгенерирован: ${GREEN}${ENCRYPTION_KEY:0:10}...${NC}"
+
+# ============================================================================
+# ШАГ 6: Настройка приложения
+# ============================================================================
+print_header "Шаг 6: Настройка приложения"
+
+read_input "Режим работы" "production" NODE_ENV
+read_input "Порт frontend приложения" "3000" APP_PORT
+read_input "Хост frontend приложения" "0.0.0.0" APP_HOST
+
+# ============================================================================
+# РЕЗЮМЕ
+# ============================================================================
+print_header "Резюме конфигурации"
+
+echo -e "${BLUE}PocketBase:${NC}"
+echo -e "  URL: ${CYAN}$POCKETBASE_URL${NC}"
+echo -e "  Администратор: ${CYAN}$ADMIN_EMAIL${NC}"
+echo ""
+
+echo -e "${BLUE}Redis:${NC}"
+echo -e "  Хост: ${CYAN}$REDIS_HOST${NC}"
+echo -e "  Порт: ${CYAN}$REDIS_PORT${NC}"
+echo -e "  База: ${CYAN}$REDIS_DB${NC}"
+echo ""
+
+echo -e "${BLUE}Приложение:${NC}"
+echo -e "  Порт: ${CYAN}$APP_PORT${NC}"
+echo -e "  Хост: ${CYAN}$APP_HOST${NC}"
+echo -e "  Режим: ${CYAN}$NODE_ENV${NC}"
+echo ""
+
+echo -e "${BLUE}Функции:${NC}"
+echo -e "  E2EE: $([ "$E2EE_ENABLED" = true ] && echo "${GREEN}✓${NC}" || echo "${RED}✗${NC}")"
+echo -e "  Real-time: $([ "$REALTIME_ENABLED" = true ] && echo "${GREEN}✓${NC}" || echo "${RED}✗${NC}")"
+echo -e "  Загрузка файлов: $([ "$FILE_UPLOAD_ENABLED" = true ] && echo "${GREEN}✓${NC}" || echo "${RED}✗${NC}")"
+echo -e "  Голос/видео: $([ "$VOICE_VIDEO_ENABLED" = true ] && echo "${GREEN}✓${NC}" || echo "${RED}✗${NC}")"
+echo -e "  Глаз Бога: $([ "$GOD_MODE_ENABLED" = true ] && echo "${GREEN}✓${NC}" || echo "${RED}✗${NC}")"
+echo -e "  Достижения: $([ "$ACHIEVEMENTS_ENABLED" = true ] && echo "${GREEN}✓${NC}" || echo "${RED}✗${NC}")"
+echo ""
+
+if ! confirm "Продолжить установку с этими настройками?" "y"; then
+    print_warning "Установка отменена"
+    exit 0
+fi
+
+# ============================================================================
+# УСТАНОВКА
+# ============================================================================
+
+# Создание .env для backend
+print_step "Создание backend-setup/.env"
+
+cat > "$APP_DIR/backend-setup/.env" << EOF
 # ============================================
 # Backend Configuration for "Конверт" Chat
+# Generated: $(date)
+# ============================================
+
+# PocketBase Configuration
+VITE_POCKETBASE_URL=$POCKETBASE_URL
+
+# Redis Configuration
+VITE_REDIS_HOST=$REDIS_HOST
+VITE_REDIS_PORT=$REDIS_PORT
+VITE_REDIS_DB=$REDIS_DB
+
+# Admin Credentials (for setup only)
+POCKETBASE_ADMIN_EMAIL=$ADMIN_EMAIL
+POCKETBASE_ADMIN_PASSWORD=$ADMIN_PASSWORD
+EOF
+
+print_success "backend-setup/.env создан"
+
+# Создание .env для frontend
+print_step "Создание .env для frontend"
+
+cat > "$APP_DIR/.env" << EOF
+# ============================================
+# Frontend Configuration for "Конверт" Chat
 # Generated: $(date)
 # ============================================
 
@@ -103,89 +379,143 @@ cat > "$APP_DIR/.env" << EOF
 VITE_BACKEND_TYPE=pocketbase
 
 # PocketBase Configuration
-VITE_POCKETBASE_URL=http://localhost:$POCKETBASE_PORT
+VITE_POCKETBASE_URL=$POCKETBASE_URL
 
 # Redis Configuration
 VITE_REDIS_HOST=$REDIS_HOST
 VITE_REDIS_PORT=$REDIS_PORT
-VITE_REDIS_DB=0
+VITE_REDIS_DB=$REDIS_DB
 
 # Security
 JWT_SECRET=$JWT_SECRET
 ENCRYPTION_KEY=$ENCRYPTION_KEY
 
 # Feature Flags
-VITE_E2EE_ENABLED=true
-VITE_REALTIME_ENABLED=true
-VITE_FILE_UPLOAD_ENABLED=true
-VITE_VOICE_VIDEO_ENABLED=true
-VITE_GOD_MODE_ENABLED=true
-VITE_ACHIEVEMENTS_ENABLED=true
+VITE_E2EE_ENABLED=$E2EE_ENABLED
+VITE_REALTIME_ENABLED=$REALTIME_ENABLED
+VITE_FILE_UPLOAD_ENABLED=$FILE_UPLOAD_ENABLED
+VITE_VOICE_VIDEO_ENABLED=$VOICE_VIDEO_ENABLED
+VITE_GOD_MODE_ENABLED=$GOD_MODE_ENABLED
+VITE_ACHIEVEMENTS_ENABLED=$ACHIEVEMENTS_ENABLED
 
 # Application Settings
-NODE_ENV=production
-PORT=3000
-HOST=0.0.0.0
+NODE_ENV=$NODE_ENV
+PORT=$APP_PORT
+HOST=$APP_HOST
 EOF
 
-print_success "Конфигурация создана: $APP_DIR/.env"
-print_warning "Сохраните эти ключи безопасности:"
-echo ""
-echo "JWT_SECRET=$JWT_SECRET"
-echo "ENCRYPTION_KEY=$ENCRYPTION_KEY"
-echo ""
+print_success ".env создан"
 
-# 4. Запуск PocketBase (если не запущен)
-print_header "4. Запуск PocketBase"
+# Установка зависимостей backend
+print_step "Установка зависимостей backend"
 
-if [ "$POCKETBASE_RUNNING" = false ]; then
-    print_info "Запуск PocketBase на порту $POCKETBASE_PORT..."
-    
-    cd $POCKETBASE_DIR
-    nohup ./pocketbase serve --http="0.0.0.0:$POCKETBASE_PORT" > pocketbase.log 2>&1 &
-    POCKETBASE_PID=$!
-    
-    print_success "PocketBase запущен (PID: $POCKETBASE_PID)"
-    
-    # Ждем пока PocketBase запустится
-    print_info "Ожидание готовности PocketBase..."
-    for i in {1..30}; do
-        if curl -s http://localhost:$POCKETBASE_PORT/api/health > /dev/null 2>&1; then
-            print_success "PocketBase готов"
-            break
-        fi
-        echo -n "."
-        sleep 2
-    done
-    echo ""
+cd "$APP_DIR/backend-setup"
+
+if confirm "Установить NPM зависимости для backend?" "y"; then
+    print_info "Установка пакетов..."
+    npm install --no-save pocketbase ioredis dotenv 2>&1 | grep -v "npm WARN" || true
+    print_success "Зависимости backend установлены"
 fi
 
-# 5. Установка зависимостей (ПЕРЕД созданием коллекций)
-print_header "5. Установка зависимостей"
+# Создание коллекций
+if [ "$POCKETBASE_RUNNING" = true ] && [ "$ADMIN_CONFIGURED" = true ]; then
+    print_step "Создание коллекций PocketBase"
+    
+    # Создаем временный скрипт с автоматической авторизацией
+    cat > "$APP_DIR/backend-setup/auto-create-collections.js" << 'EOFSCRIPT'
+const PocketBase = require('pocketbase').default || require('pocketbase');
+require('dotenv').config();
+
+const POCKETBASE_URL = process.env.VITE_POCKETBASE_URL;
+const ADMIN_EMAIL = process.env.POCKETBASE_ADMIN_EMAIL;
+const ADMIN_PASSWORD = process.env.POCKETBASE_ADMIN_PASSWORD;
+
+async function main() {
+    const pb = new PocketBase(POCKETBASE_URL);
+    
+    try {
+        // Авторизация
+        await pb.admins.authWithPassword(ADMIN_EMAIL, ADMIN_PASSWORD);
+        console.log('✓ Авторизация успешна');
+        
+        // Загружаем основной скрипт создания коллекций
+        const { createCollections } = require('./create-collections.js');
+        await createCollections();
+        
+    } catch (error) {
+        console.error('✗ Ошибка:', error.message);
+        process.exit(1);
+    }
+}
+
+main();
+EOFSCRIPT
+    
+    # Патчим create-collections.js чтобы использовать токен из переменной окружения
+    cat > "$APP_DIR/backend-setup/create-collections-patched.js" << 'EOFSCRIPT'
+#!/usr/bin/env node
+
+const PocketBase = require('pocketbase').default || require('pocketbase');
+require('dotenv').config();
+
+const POCKETBASE_URL = process.env.VITE_POCKETBASE_URL || 'http://127.0.0.1:54739';
+const ADMIN_EMAIL = process.env.POCKETBASE_ADMIN_EMAIL;
+const ADMIN_PASSWORD = process.env.POCKETBASE_ADMIN_PASSWORD;
+EOFSCRIPT
+    
+    # Добавляем остальную часть из оригинального файла
+    tail -n +12 "$APP_DIR/backend-setup/create-collections.js" | sed '/const readline = require/,/rl.close();/d' | sed 's/await pb.admins.authWithPassword(email, password);/await pb.admins.authWithPassword(ADMIN_EMAIL, ADMIN_PASSWORD);/' >> "$APP_DIR/backend-setup/create-collections-patched.js"
+    
+    if confirm "Создать коллекции в PocketBase сейчас?" "y"; then
+        node create-collections-patched.js
+        rm -f create-collections-patched.js auto-create-collections.js
+    else
+        print_info "Запустите позже: cd backend-setup && node create-collections.js"
+        rm -f create-collections-patched.js auto-create-collections.js
+    fi
+else
+    print_warning "Пропуск создания коллекций (PocketBase недоступен или не настроен)"
+    print_info "Запустите позже: cd backend-setup && node create-collections.js"
+fi
+
+# Установка зависимостей frontend
+print_step "Установка зависимостей frontend"
 
 cd "$APP_DIR"
 
-if [ ! -f "package.json" ]; then
-    print_warning "package.json не найден в $APP_DIR, используем backend-setup/package.json"
-    cd "$APP_DIR/backend-setup"
+if confirm "Установить NPM зависимости для frontend?" "y"; then
+    print_info "Установка пакетов... (это может занять несколько минут)"
+    npm install
+    print_success "Зависимости frontend установлены"
 fi
 
-print_info "Установка NPM пакетов..."
-npm install --no-save pocketbase ioredis dotenv 2>&1 | grep -v "npm WARN" || true
+# Создание директорий
+print_step "Создание необходимых директорий"
 
-print_success "Зависимости установлены"
+mkdir -p "$APP_DIR/logs"
+mkdir -p "$APP_DIR/uploads"
+chmod 755 "$APP_DIR/logs"
+chmod 755 "$APP_DIR/uploads"
 
-# 6. Создание коллекций PocketBase
-print_header "6. Создание коллекций в PocketBase"
+print_success "Директории созданы"
 
-cd "$APP_DIR/backend-setup"
-node create-collections.js
+# Тестирование
+if [ "$POCKETBASE_RUNNING" = true ] && [ "$REDIS_RUNNING" = true ]; then
+    print_step "Тестирование подключений"
+    
+    if confirm "Запустить тесты подключения?" "y"; then
+        cd "$APP_DIR/backend-setup"
+        node test-connection.js || print_warning "Некоторые тесты не прошли"
+    fi
+fi
 
-# 7. Создание systemd сервисов
-print_header "7. Создание systemd сервисов"
+# Создание systemd сервисов (опционально)
+print_step "Создание systemd сервисов"
 
-# PocketBase service
-sudo tee /etc/systemd/system/konvert-pocketbase.service > /dev/null << EOF
+if confirm "Создать systemd сервис для автозапуска?" "n"; then
+    # PocketBase service
+    if [ -n "$POCKETBASE_DIR" ]; then
+        sudo tee /etc/systemd/system/konvert-pocketbase.service > /dev/null << EOF
 [Unit]
 Description=Konvert PocketBase Backend
 After=network.target
@@ -194,7 +524,7 @@ After=network.target
 Type=simple
 User=$USER
 WorkingDirectory=$POCKETBASE_DIR
-ExecStart=$POCKETBASE_DIR/pocketbase serve --http=0.0.0.0:$POCKETBASE_PORT
+ExecStart=$POCKETBASE_DIR/pocketbase serve --http=${POCKETBASE_HOST}:${POCKETBASE_PORT}
 Restart=always
 RestartSec=5
 
@@ -202,113 +532,73 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-print_success "Systemd service создан: konvert-pocketbase.service"
-
-# Перезагрузка systemd
-sudo systemctl daemon-reload
-sudo systemctl enable konvert-pocketbase
-print_success "PocketBase добавлен в автозагрузку"
-
-# 8. Настройка Redis
-print_header "8. Настройка Redis"
-
-# Проверяем конфигурацию Redis
-REDIS_CONF="/etc/redis/redis.conf"
-
-if [ -f "$REDIS_CONF" ]; then
-    print_info "Проверка конфигурации Redis..."
-    
-    # Рекомендуемые настройки
-    print_info "Рекомендуемые настройки Redis:"
-    echo "  maxmemory 256mb"
-    echo "  maxmemory-policy allkeys-lru"
-    echo "  appendonly yes"
-    
-    read -p "Применить рекомендуемые настройки Redis? (y/N): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        sudo cp $REDIS_CONF ${REDIS_CONF}.backup
-        
-        # Применяем настройки
-        sudo sed -i 's/^# maxmemory .*/maxmemory 256mb/' $REDIS_CONF
-        sudo sed -i 's/^# maxmemory-policy .*/maxmemory-policy allkeys-lru/' $REDIS_CONF
-        sudo sed -i 's/^appendonly no/appendonly yes/' $REDIS_CONF
-        
-        sudo systemctl restart redis-server
-        print_success "Redis настроен и перезапущен"
+        sudo systemctl daemon-reload
+        sudo systemctl enable konvert-pocketbase
+        print_success "PocketBase systemd сервис создан"
     fi
+    
+    # Frontend service
+    sudo tee /etc/systemd/system/konvert-frontend.service > /dev/null << EOF
+[Unit]
+Description=Konvert Chat Frontend
+After=network.target konvert-pocketbase.service redis-server.service
+
+[Service]
+Type=simple
+User=$USER
+WorkingDirectory=$APP_DIR
+ExecStart=/usr/bin/npm run preview
+Restart=always
+RestartSec=5
+Environment="NODE_ENV=production"
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    print_success "Frontend systemd сервис создан"
+    
+    print_info "Для запуска сервисов:"
+    echo "  sudo systemctl start konvert-pocketbase"
+    echo "  sudo systemctl start konvert-frontend"
 fi
 
-# 9. Тестирование подключений
-print_header "9. Тестирование подключений"
+# ============================================================================
+# ЗАВЕРШЕНИЕ
+# ============================================================================
+print_header "Установка завершена! 🎉"
 
-# Тест PocketBase
-print_info "Тестирование PocketBase..."
-if curl -s http://localhost:$POCKETBASE_PORT/api/health | grep -q "ok"; then
-    print_success "PocketBase: OK"
-else
-    print_error "PocketBase: FAILED"
-fi
-
-# Тест Redis
-print_info "Тестирование Redis..."
-if echo "PING" | redis-cli -h $REDIS_HOST -p $REDIS_PORT | grep -q "PONG"; then
-    print_success "Redis: OK"
-else
-    print_error "Redis: FAILED"
-fi
-
-# Тест Redis SET/GET
-print_info "Тестирование Redis кэша..."
-redis-cli -h $REDIS_HOST -p $REDIS_PORT SET test_key "test_value" > /dev/null
-if [ "$(redis-cli -h $REDIS_HOST -p $REDIS_PORT GET test_key)" = "test_value" ]; then
-    print_success "Redis кэш: OK"
-    redis-cli -h $REDIS_HOST -p $REDIS_PORT DEL test_key > /dev/null
-else
-    print_error "Redis кэш: FAILED"
-fi
-
-# 10. Финальная настройка
-print_header "10. Финальная настройка"
-
-# Создание директорий
-mkdir -p "$APP_DIR/logs"
-mkdir -p "$APP_DIR/uploads"
-mkdir -p "$POCKETBASE_DIR/pb_data"
-
-print_success "Директории созданы"
-
-# Права доступа
-chmod 755 "$APP_DIR/logs"
-chmod 755 "$APP_DIR/uploads"
-
-print_success "Права доступа установлены"
-
-# 11. Итоги
-print_header "✅ Установка завершена!"
-
-echo ""
-print_success "Backend сервисы:"
-echo "  PocketBase: http://localhost:$POCKETBASE_PORT"
-echo "  PocketBase Admin: http://localhost:$POCKETBASE_PORT/_/"
-echo "  Redis: $REDIS_HOST:$REDIS_PORT"
-echo ""
-
-print_info "Полезные команды:"
-echo "  sudo systemctl status konvert-pocketbase  # Статус PocketBase"
-echo "  sudo systemctl restart konvert-pocketbase # Перезапуск PocketBase"
-echo "  sudo systemctl status redis-server        # Статус Redis"
-echo "  redis-cli monitor                          # Мониторинг Redis"
-echo "  tail -f $POCKETBASE_DIR/pocketbase.log    # Логи PocketBase"
+echo -e "${GREEN}✓${NC} Конфигурация создана"
+echo -e "${GREEN}✓${NC} Зависимости установлены"
+[ "$POCKETBASE_RUNNING" = true ] && echo -e "${GREEN}✓${NC} PocketBase доступен"
+[ "$REDIS_RUNNING" = true ] && echo -e "${GREEN}✓${NC} Redis доступен"
 echo ""
 
 print_info "Следующие шаги:"
-echo "  1. Создайте первого администратора в PocketBase Admin UI"
-echo "  2. Запустите frontend: cd $APP_DIR && npm run dev"
-echo "  3. Откройте в браузере: http://localhost:3000"
+echo ""
+echo -e "  ${CYAN}1.${NC} Запустите приложение в режиме разработки:"
+echo -e "     ${BLUE}cd $APP_DIR${NC}"
+echo -e "     ${BLUE}npm run dev${NC}"
+echo ""
+echo -e "  ${CYAN}2.${NC} Или соберите для production:"
+echo -e "     ${BLUE}npm run build${NC}"
+echo -e "     ${BLUE}npm run preview${NC}"
+echo ""
+echo -e "  ${CYAN}3.${NC} Откройте в браузере:"
+echo -e "     ${BLUE}http://localhost:$APP_PORT${NC}"
 echo ""
 
-print_warning "ВАЖНО: Сохраните учетные данные из .env файла!"
+print_info "Полезные ссылки:"
+echo -e "  PocketBase Admin: ${CYAN}$POCKETBASE_URL/_/${NC}"
+echo -e "  PocketBase API: ${CYAN}$POCKETBASE_URL/api/${NC}"
 echo ""
 
-print_success "Backend готов к использованию! 🚀"
+print_warning "ВАЖНО: Сохраните эти учетные данные в безопасном месте!"
+echo ""
+echo -e "  ${YELLOW}JWT_SECRET${NC}=${JWT_SECRET}"
+echo -e "  ${YELLOW}ENCRYPTION_KEY${NC}=${ENCRYPTION_KEY}"
+echo -e "  ${YELLOW}PocketBase Admin${NC}=${ADMIN_EMAIL}"
+echo ""
+
+print_success "Готово! Приятного использования чата Конверт! 🚀"
