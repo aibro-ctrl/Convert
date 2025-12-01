@@ -213,6 +213,34 @@ print_info "Если вы еще не создали администратор�
 print_info "${CYAN}$POCKETBASE_URL/_/${NC}"
 echo ""
 
+# Проверяем наличие администратора
+if [ -f "$APP_DIR/backend-setup/node_modules/pocketbase/package.json" ]; then
+    print_info "Проверка наличия администратора..."
+    cd "$APP_DIR/backend-setup"
+    
+    if node check-admin.js 2>&1 | grep -q "Администратор СОЗДАН"; then
+        print_success "Администратор уже создан"
+        ADMIN_EXISTS=true
+    else
+        print_warning "Администратор не создан"
+        ADMIN_EXISTS=false
+    fi
+else
+    ADMIN_EXISTS=false
+fi
+
+if [ "$ADMIN_EXISTS" = false ]; then
+    print_warning "Необходимо создать администратора PocketBase"
+    print_info "Откройте ${CYAN}$POCKETBASE_URL/_/${NC} в браузере"
+    
+    if confirm "Открыть URL в браузере? (требует xdg-open)" "n"; then
+        xdg-open "$POCKETBASE_URL/_/" 2>/dev/null || print_warning "Не удалось открыть браузер"
+    fi
+    
+    echo ""
+    read -p "Нажмите Enter после создания администратора..."
+fi
+
 if confirm "Вы уже создали администратора PocketBase?" "y"; then
     read_input "Email администратора" "" ADMIN_EMAIL
     read_input "Пароль администратора" "" ADMIN_PASSWORD "password"

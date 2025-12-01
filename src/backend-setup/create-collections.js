@@ -301,15 +301,52 @@ async function createCollections() {
   }
 
   try {
-    await pb.admins.authWithPassword(email, password);
+    // В новых версиях PocketBase используется другой endpoint
+    await pb.collection('_superusers').authWithPassword(email, password);
     console.log('✓ Авторизация успешна\n');
   } catch (error) {
     console.error('✗ Ошибка авторизации:', error.message);
-    console.error('\n📝 Как создать администратора:');
-    console.error('  1. Откройте в браузере: ' + POCKETBASE_URL + '/_/');
-    console.error('  2. Заполните форму создания администратора');
-    console.error('  3. Запомните email и пароль');
-    console.error('  4. Запустите этот скрипт снова\n');
+    
+    // Детальная диагностика
+    if (error.status === 404 || error.message.includes("wasn't found")) {
+      console.error('\n❌ КРИТИЧЕСКАЯ ОШИБКА: Администратор PocketBase не создан!\n');
+      console.error('📝 Как создать администратора:');
+      console.error('  1. Откройте в браузере:');
+      console.error('     ' + POCKETBASE_URL + '/_/');
+      console.error('');
+      console.error('  2. Если видите форму создания администратора:');
+      console.error('     - Заполните Email');
+      console.error('     - Введите пароль (минимум 8 символов)');
+      console.error('     - Нажмите "Create admin"');
+      console.error('');
+      console.error('  3. Если видите форму входа - администратор уже создан:');
+      console.error('     - Проверьте правильность email и пароля');
+      console.error('     - Email должен быть валидным (например: admin@localhost)');
+      console.error('');
+      console.error('  4. Запустите этот скрипт снова\n');
+    } else if (error.status === 400) {
+      console.error('\n❌ Неверный email или пароль!\n');
+      console.error('  - Проверьте правильность учетных данных');
+      console.error('  - Email должен быть валидным');
+      console.error('  - Пароль должен быть минимум 8 символов\n');
+    } else if (error.status === 401 || error.status === 403) {
+      console.error('\n❌ Неверные учетные данные!\n');
+      console.error('  - Email: ' + email);
+      console.error('  - Проверьте пароль\n');
+    } else {
+      console.error('\n❌ Неизвестная ошибка:\n');
+      console.error('  Status:', error.status);
+      console.error('  Message:', error.message);
+      if (error.response) {
+        console.error('  Response:', JSON.stringify(error.response, null, 2));
+      }
+      console.error('\n💡 Попробуйте:');
+      console.error('  1. Открыть ' + POCKETBASE_URL + '/_/');
+      console.error('  2. Убедиться что администратор создан');
+      console.error('  3. Проверить email и пароль');
+      console.error('  4. Запустить скрипт снова\n');
+    }
+    
     process.exit(1);
   }
 
