@@ -8,7 +8,7 @@
 const PocketBase = require('pocketbase').default || require('pocketbase');
 require('dotenv').config();
 
-const POCKETBASE_URL = process.env.VITE_POCKETBASE_URL || 'http://localhost:8090';
+const POCKETBASE_URL = process.env.VITE_POCKETBASE_URL || 'http://127.0.0.1:54739';
 
 // Определение коллекций
 const COLLECTIONS = [

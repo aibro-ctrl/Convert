@@ -5,7 +5,7 @@
 
 import { BackendConfig } from './interface';
 
-export const BACKEND_TYPE = (import.meta.env?.VITE_BACKEND_TYPE || 'supabase') as 'supabase' | 'pocketbase' | 'firebase' | 'custom';
+export const BACKEND_TYPE = (import.meta.env?.VITE_BACKEND_TYPE || 'pocketbase') as 'supabase' | 'pocketbase' | 'firebase' | 'custom';
 
 export const configs: Record<string, BackendConfig> = {
   supabase: {

@@ -1,436 +1,83 @@
-# 🚀 Backend Setup - Установка без Docker
+# Backend Setup для Konvert Chat
 
-## 📋 Обзор
+Скрипты настройки PocketBase и Redis для чата "Конверт".
 
-Полная установка backend для чата "Конверт" на Ubuntu сервере с нативными PocketBase и Redis (БЕЗ Docker).
-
-## ✅ Требования
-
-### Предустановленное ПО:
-- ✅ Ubuntu 20.04+ (или Debian)
-- ✅ Node.js 18+ и npm
-- ✅ PocketBase установлен
-- ✅ Redis установлен
-
-### Порты:
-- 8090 - PocketBase
-- 6379 - Redis
-- 3000 - Frontend (опционально)
-
-## 🚀 Быстрый старт
-
-### 1. Установка зависимостей
+## Быстрый старт
 
 ```bash
-cd backend-setup
-npm install pocketbase ioredis dotenv
-# или используйте скрипт:
-# ./install-deps.sh
+# 1. Создать .env
+cp .env.example .env
+
+# 2. Установить зависимости
+npm install
+
+# 3. Создать коллекции PocketBase
+node create-collections.js
+
+# 4. Проверить подключение
+node test-connection.js
 ```
 
-### 2. Настройка окружения
+## Скрипты
 
-Создайте `.env` файл с настройками вашего PocketBase и Redis:
+- **`create-collections.js`** - создает все необходимые коллекции в PocketBase
+- **`test-connection.js`** - проверяет подключение к PocketBase и Redis
+- **`test-imports.js`** - тестирует импорты модулей
+- **`redis-cache.js`** - утилиты для работы с Redis кэшем
+- **`setup.sh`** - полный скрипт установки (для Ubuntu)
 
-```bash
-# Интерактивная настройка:
-chmod +x configure.sh
-./configure.sh
+## Конфигурация
 
-# Или создайте .env вручную:
-cat > .env << 'EOF'
+Файл `.env`:
+
+```env
 VITE_POCKETBASE_URL=http://127.0.0.1:54739
 VITE_REDIS_HOST=localhost
 VITE_REDIS_PORT=6379
 VITE_REDIS_DB=0
-EOF
 ```
 
-**Важно:** Укажите правильный URL вашего PocketBase!
+## Требования
 
-### 3. Создание коллекций
+- PocketBase запущен на http://127.0.0.1:54739
+- Redis запущен на localhost:6379
+- Node.js 18+
+
+## Создаваемые коллекции
+
+1. **users** - пользователи с ролями и E2EE ключами
+2. **rooms** - комнаты (публичные, приватные, DM)
+3. **messages** - сообщения с E2EE и реакциями
+4. **achievements** - достижения
+5. **user_achievements** - разблокированные достижения
+6. **friend_requests** - запросы в друзья
+7. **files** - загруженные файлы
+
+## Troubleshooting
+
+### PocketBase не доступен
 
 ```bash
-cd backend-setup
-node create-collections.js
+# Проверить статус
+sudo systemctl status pocketbase
+
+# Запустить вручную
+cd /opt/pocketbase
+./pocketbase serve --http=127.0.0.1:54739
 ```
 
-Будут созданы коллекции:
-- ✅ users (auth)
-- ✅ rooms
-- ✅ messages
-- ✅ achievements
-- ✅ user_achievements
-- ✅ friend_requests
-- ✅ files
-
-### 4. Создание systemd сервиса
+### Redis не работает
 
 ```bash
-sudo nano /etc/systemd/system/konvert-pocketbase.service
-```
-
-Добавьте:
-
-```ini
-[Unit]
-Description=Konvert PocketBase Backend
-After=network.target
-
-[Service]
-Type=simple
-User=YOUR_USER
-WorkingDirectory=/opt/pocketbase
-ExecStart=/opt/pocketbase/pocketbase serve --http=0.0.0.0:8090
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Активируйте:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable konvert-pocketbase
-sudo systemctl start konvert-pocketbase
-sudo systemctl status konvert-pocketbase
-```
-
-## 🧪 Тестирование
-
-### Проверка PocketBase:
-
-```bash
-# Health check
-curl http://localhost:8090/api/health
-
-# Список коллекций
-curl http://localhost:8090/api/collections
-```
-
-### Проверка Redis:
-
-```bash
-# Ping
-redis-cli ping
-
-# Установка и получение значения
-redis-cli SET test "hello"
-redis-cli GET test
-
-# Статистика
-redis-cli INFO
-```
-
-### Комплексный тест:
-
-```bash
-cd backend-setup
-node test-connection.js
-```
-
-## 🔐 Настройка доступа
-
-### PocketBase Admin:
-
-1. Откройте: http://localhost:8090/_/
-2. Создайте первого администратора
-3. Email: `admin@konvert.chat`
-4. Password: `ваш_безопасный_пароль`
-
-### Правила доступа:
-
-В PocketBase Admin UI настройте правила для каждой коллекции:
-
-**Users:**
-- List: `@request.auth.id != ""`
-- View: `@request.auth.id != ""`
-- Create: Только для signup
-- Update: `@request.auth.id = id || @request.auth.role = "admin"`
-
-**Rooms:**
-- List: `members.id ?= @request.auth.id`
-- View: `members.id ?= @request.auth.id`
-- Create: `@request.auth.id != ""`
-- Update: `created_by = @request.auth.id || @request.auth.role = "admin"`
-
-**Messages:**
-- List: Через room permissions
-- Create: `@request.auth.id != ""`
-- Update: `sender_id = @request.auth.id`
-- Delete: `sender_id = @request.auth.id || @request.auth.role = "admin"`
-
-## 📊 Redis кэширование
-
-### Использование Redis Cache:
-
-```javascript
-const { getRedisCache } = require('./backend-setup/redis-cache');
-
-// Получение экземпляра
-const cache = getRedisCache();
-
-// Кэширование пользователя
-await cache.cacheUser('user123', userData);
-const user = await cache.getUser('user123');
-
-// Кэширование комнаты
-await cache.cacheRoom('room456', roomData);
-const room = await cache.getRoom('room456');
-
-// Онлайн пользователи
-await cache.addOnlineUser('user123');
-const online = await cache.getOnlineUsers();
-
-// Real-time события
-await cache.publishRoomUpdate('room456', { type: 'new_message' });
-```
-
-### Оптимизация Redis:
-
-Отредактируйте `/etc/redis/redis.conf`:
-
-```conf
-# Максимальная память (для кэша)
-maxmemory 256mb
-
-# Политика вытеснения
-maxmemory-policy allkeys-lru
-
-# Persistence (опционально)
-appendonly yes
-appendfsync everysec
-```
-
-Перезапустите Redis:
-
-```bash
-sudo systemctl restart redis-server
-```
-
-## 🔄 Интеграция с frontend
-
-### Обновите файлы проекта:
-
-1. Установите адаптер:
-```bash
-npm install pocketbase ioredis
-```
-
-2. Обновите `src/utils/api.ts`:
-```typescript
-import PocketBaseAdapter from '../backend-adapter/pocketbase-adapter';
-
-const adapter = new PocketBaseAdapter();
-
-export const authAPI = {
-  signup: adapter.signup.bind(adapter),
-  signin: adapter.signin.bind(adapter),
-  // ... остальные методы
-};
-```
-
-3. Запустите:
-```bash
-npm run dev
-```
-
-## 📝 Полезные команды
-
-### Управление PocketBase:
-
-```bash
-# Статус
-sudo systemctl status konvert-pocketbase
-
-# Логи
-sudo journalctl -u konvert-pocketbase -f
-
-# Перезапуск
-sudo systemctl restart konvert-pocketbase
-
-# Остановка
-sudo systemctl stop konvert-pocketbase
-```
-
-### Управление Redis:
-
-```bash
-# Статус
+# Проверить статус
 sudo systemctl status redis-server
 
-# Мониторинг команд
-redis-cli monitor
-
-# Статистика
-redis-cli INFO stats
-
-# Очистка кэша
-redis-cli FLUSHDB
+# Тест подключения
+redis-cli -h localhost -p 6379 ping
 ```
 
-### Резервное копирование:
+### Коллекции не создаются
 
-```bash
-# PocketBase
-tar -czf pocketbase-backup-$(date +%Y%m%d).tar.gz /opt/pocketbase/pb_data
-
-# Redis
-redis-cli SAVE
-cp /var/lib/redis/dump.rdb ~/backups/redis-$(date +%Y%m%d).rdb
-```
-
-## 🐛 Troubleshooting
-
-### PocketBase не запускается:
-
-```bash
-# Проверка порта
-sudo lsof -i :8090
-
-# Права доступа
-sudo chown -R $USER:$USER /opt/pocketbase
-
-# Логи
-cat /opt/pocketbase/pocketbase.log
-```
-
-### Redis не подключается:
-
-```bash
-# Проверка сервиса
-sudo systemctl status redis-server
-
-# Проверка конфигурации
-redis-cli CONFIG GET bind
-
-# Перезапуск
-sudo systemctl restart redis-server
-```
-
-### Ошибка создания коллекций:
-
-```bash
-# Проверка доступности API
-curl http://localhost:8090/api/health
-
-# Повторная попытка
-node create-collections.js
-
-# Ручное создание через Admin UI
-# Откройте: http://localhost:8090/_/
-```
-
-## 🌐 Production Deployment
-
-### Настройка Nginx:
-
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-
-    # Frontend
-    location / {
-        root /var/www/konvert/dist;
-        try_files $uri $uri/ /index.html;
-    }
-
-    # PocketBase API
-    location /api/ {
-        proxy_pass http://localhost:8090;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-
-    # PocketBase Admin
-    location /_/ {
-        proxy_pass http://localhost:8090;
-        proxy_set_header Host $host;
-    }
-
-    # WebSocket для real-time
-    location /ws {
-        proxy_pass http://localhost:8090;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-```
-
-### SSL с Let's Encrypt:
-
-```bash
-sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com
-sudo certbot renew --dry-run
-```
-
-### Мониторинг:
-
-```bash
-# Установка Netdata
-bash <(curl -Ss https://my-netdata.io/kickstart.sh)
-
-# Или простой мониторинг
-watch -n 5 'systemctl status konvert-pocketbase redis-server'
-```
-
-## 📊 Производительность
-
-### Рекомендуемые настройки:
-
-**PocketBase:**
-- Индексы на часто используемых полях
-- Лимиты на размер файлов
-- Rate limiting через Nginx
-
-**Redis:**
-- maxmemory: 256-512MB
-- maxmemory-policy: allkeys-lru
-- appendonly: yes
-
-**System:**
-- Swap: минимум 2GB
-- File descriptors: увеличить лимит
-- TCP keepalive: настроить для long-running connections
-
-## ✅ Чеклист установки
-
-- [ ] PocketBase установлен и запущен
-- [ ] Redis установлен и запущен
-- [ ] Коллекции созданы
-- [ ] .env файл настроен
-- [ ] Systemd сервисы созданы
-- [ ] Первый администратор создан
-- [ ] Правила доступа настроены
-- [ ] Подключения протестированы
-- [ ] Nginx настроен (для продакшена)
-- [ ] SSL настроен (для продакшена)
-- [ ] Резервное копирование настроено
-
-## 🎉 Готово!
-
-После установки у вас будет:
-
-✅ PocketBase запущен как системный сервис  
-✅ Redis настроен для кэширования  
-✅ Все коллекции созданы  
-✅ Дефолтные достижения добавлены  
-✅ Готово к использованию!  
-
-Запустите frontend:
-```bash
-npm run dev
-```
-
-Откройте: http://localhost:3000
-
----
-
-**Версия:** 1.0.0  
-**Дата:** 01.12.2025  
-**Поддержка:** Ubuntu 20.04+
+1. Убедитесь что PocketBase доступен: `curl http://127.0.0.1:54739/api/health`
+2. Проверьте `.env` файл
+3. Запустите с отладкой: `node create-collections.js`

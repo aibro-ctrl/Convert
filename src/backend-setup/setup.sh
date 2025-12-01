@@ -22,7 +22,7 @@ print_header() { echo -e "\n${BLUE}===${NC} $1 ${BLUE}===${NC}\n"; }
 
 # Конфигурация (можно изменить)
 POCKETBASE_DIR="${POCKETBASE_DIR:-/opt/pocketbase}"
-POCKETBASE_PORT="${POCKETBASE_PORT:-8090}"
+POCKETBASE_PORT="${POCKETBASE_PORT:-54739}"
 REDIS_HOST="${REDIS_HOST:-localhost}"
 REDIS_PORT="${REDIS_PORT:-6379}"
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
