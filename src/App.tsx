@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useAuth, AuthProvider } from './contexts/AuthContext';
+import React, { useState, useEffect } from 'react';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ConnectionProvider, useConnection } from './contexts/ConnectionContext';
 import { AchievementsProvider } from './contexts/AchievementsContext';
@@ -16,11 +16,11 @@ import { NotificationToast } from './components/Profile/NotificationToast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Toaster, ToastProvider, useToastListener } from './components/ui/sonner';
 import { Badge } from './components/ui/badge';
-import { Room } from './utils/api';
-import type { DirectMessage } from './utils/apiTypes';
-import { roomsAPI, dmAPI, notificationsAPI, usersAPI } from './utils/simpleApi';
+import { Room, DirectMessage, roomsAPI, dmAPI, notificationsAPI } from './utils/api';
 import { MessageCircle, Users, User, WifiOff, Wifi, Mail } from './components/ui/icons';
 import { validateAndCleanToken } from './utils/tokenUtils';
+import logoEnvelope from 'figma:asset/28456c23b87e910377ba6ff1bfaf8a2b2f85670a.png';
+import logoText from 'figma:asset/358c3d7b52371e48c9dc5b2ec3f5b14609eb7b5e.png';
 
 // Validate token on app startup - this runs before React renders
 validateAndCleanToken();
@@ -144,14 +144,16 @@ function MainApp() {
                 // Получаем информацию об отправителе
                 const otherUserId = dm.participants.find(id => id !== user.id);
                 if (otherUserId && dm.last_message.sender_id === otherUserId) {
-                  usersAPI.getById(otherUserId).then(({ user: sender }) => {
-                    window.showNotificationToast?.({
-                      type: 'dm',
-                      from: sender,
-                      content: dm.last_message!.content,
-                      dm: dm,
-                    });
-                  }).catch(console.error);
+                  import('./utils/api').then(({ usersAPI }) => {
+                    usersAPI.getById(otherUserId).then(({ user: sender }) => {
+                      window.showNotificationToast?.({
+                        type: 'dm',
+                        from: sender,
+                        content: dm.last_message!.content,
+                        dm: dm,
+                      });
+                    }).catch(console.error);
+                  });
                 }
               }
             }
@@ -173,12 +175,14 @@ function MainApp() {
             if (!sessionStorage.getItem(notifKey)) {
               sessionStorage.setItem(notifKey, 'true');
               
-              usersAPI.getById(notif.from_user_id).then(({ user: sender }) => {
-                window.showNotificationToast?.({
-                  type: 'friend_request',
-                  from: sender,
-                });
-              }).catch(console.error);
+              import('./utils/api').then(({ usersAPI }) => {
+                usersAPI.getById(notif.from_user_id).then(({ user: sender }) => {
+                  window.showNotificationToast?.({
+                    type: 'friend_request',
+                    from: sender,
+                  });
+                }).catch(console.error);
+              });
             }
           }
         });
@@ -287,8 +291,8 @@ function MainApp() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-              <span className="text-3xl">💬</span>
-              <h1 className="text-xl font-bold">Коверт</h1>
+              <img src={logoEnvelope} alt="Конверт" className="h-8 w-auto" />
+              <img src={logoText} alt="Конверт" className="h-8 w-auto" />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">{user.username}</span>

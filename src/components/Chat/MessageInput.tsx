@@ -95,7 +95,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
           setUploadProgress({ show: true, message: 'Сжатие изображения...' });
           const compressedFile = await compressImage(file);
 
-          // Загружаем в PocketBase Storage
+          // Загружаем в Supabase Storage
           setUploadProgress({ show: true, message: 'Загрузка изображения...' });
           const { url } = await storageAPI.uploadFile(compressedFile);
 
@@ -174,7 +174,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
           // Создаем файл из blob
           const audioFile = new File([audioBlob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
           
-          // Загружаем в PocketBase Storage
+          // Загружаем в Supabase Storage
           setUploadProgress({ show: true, message: 'Загрузка голосового сообщения...' });
           const { url } = await storageAPI.uploadFile(audioFile);
           
@@ -296,7 +296,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
           // Создаем файл из blob
           const videoFile = new File([videoBlob], `video-${Date.now()}.webm`, { type: 'video/webm' });
           
-          // Загружаем в PocketBase Storage
+          // Загружаем в Supabase Storage
           setUploadProgress({ show: true, message: 'Загрузка видео...' });
           const { url } = await storageAPI.uploadFile(videoFile);
           
@@ -497,7 +497,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
         return;
       }
 
-      // Загружаем файл в PocketBase Storage
+      // Загружаем файл в Supabase Storage
       setUploadProgress({ show: true, message: 'Загрузка файла...' });
       const { url } = await storageAPI.uploadFile(processedFile);
 

@@ -3,7 +3,7 @@ import * as crypto from '../utils/crypto';
 import { useAuth } from './AuthContext';
 import { usersAPI } from '../utils/api';
 
-export interface CryptoContextType {
+interface CryptoContextType {
   isReady: boolean;
   publicKey: CryptoKey | null;
   privateKey: CryptoKey | null;
