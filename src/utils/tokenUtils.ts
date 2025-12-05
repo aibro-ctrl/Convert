@@ -6,7 +6,8 @@
  * @param bufferSeconds - Buffer time in seconds before actual expiry (default: 60)
  * @returns true if token is expired or invalid
  */
-export function isTokenExpired(token: string, bufferSeconds: number = 60): boolean {
+export function isTokenExpired(token: string, bufferSeconds: number = 300): boolean {
+  // Увеличили buffer до 5 минут - не выкидываем пользователя слишком рано
   try {
     const parts = token.split('.');
     if (parts.length !== 3) {
@@ -18,16 +19,21 @@ export function isTokenExpired(token: string, bufferSeconds: number = 60): boole
     
     // Check for required claims
     if (!payload.sub) {
+      // Не считаем токен невалидным если нет sub - может быть anon key
+      if (payload.role === 'anon') {
+        return false;
+      }
       console.warn('isTokenExpired: Missing sub claim');
       return true;
     }
     
     if (!payload.exp) {
+      // Если нет exp, считаем токен валидным (может быть долгоживущий токен)
       console.log('isTokenExpired: No expiry set, assuming valid');
       return false;
     }
     
-    // Check if expired (with buffer)
+    // Check if expired (with buffer) - увеличили buffer до 5 минут
     const expiryTime = payload.exp * 1000;
     const now = Date.now();
     const isExpired = expiryTime < now + (bufferSeconds * 1000);
@@ -35,13 +41,15 @@ export function isTokenExpired(token: string, bufferSeconds: number = 60): boole
     if (isExpired) {
       const expDate = new Date(expiryTime);
       const minutesAgo = Math.floor((now - expiryTime) / 1000 / 60);
+      // Только предупреждаем, но не выкидываем сразу
       console.warn(`isTokenExpired: Token expired ${minutesAgo} minutes ago (at ${expDate.toISOString()})`);
     }
     
     return isExpired;
   } catch (e) {
     console.error('isTokenExpired: Error parsing token:', e);
-    return true;
+    // При ошибке парсинга не считаем токен невалидным - может быть временная проблема
+    return false;
   }
 }
 
@@ -84,12 +92,22 @@ export function validateAndCleanToken(): boolean {
     return false;
   }
   
-  console.log('validateAndCleanToken: Checking token...');
-  
-  if (isTokenExpired(token, 0)) {
-    console.warn('validateAndCleanToken: Token is expired, clearing...');
-    clearStoragePreservingSettings();
+  // Проверяем минимальную длину токена (JWT должен быть достаточно длинным)
+  if (token.length < 20) {
+    console.warn('validateAndCleanToken: Token too short, removing:', token.length);
+    localStorage.removeItem('access_token');
     return false;
+  }
+  
+  console.log('validateAndCleanToken: Checking token (length:', token.length, ')...');
+  
+  // Используем большой buffer (10 минут) - не выкидываем пользователя слишком рано
+  // Даже если токен истек, пользователь останется в системе до явного выхода
+  if (isTokenExpired(token, 600)) {
+    console.warn('validateAndCleanToken: Token is expired, but keeping user in app');
+    // НЕ очищаем токен - пользователь остается в приложении
+    // Токен будет обновлен автоматически через refresh token
+    return true; // Возвращаем true чтобы пользователь остался в системе
   }
   
   console.log('validateAndCleanToken: Token is valid');

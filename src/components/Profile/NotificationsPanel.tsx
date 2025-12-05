@@ -5,6 +5,7 @@ import { Card, CardContent } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { toast } from '../ui/sonner';
 import { Bell, X, CheckCircle, UserPlus, AtSign, Heart, Users } from '../ui/icons';
+import { useAchievements } from '../../contexts/AchievementsContext';
 
 interface NotificationsPanelProps {
   onClose: () => void;
@@ -12,6 +13,7 @@ interface NotificationsPanelProps {
 }
 
 export function NotificationsPanel({ onClose, onFriendRequestHandled }: NotificationsPanelProps) {
+  const { tracker } = useAchievements();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -51,21 +53,45 @@ export function NotificationsPanel({ onClose, onFriendRequestHandled }: Notifica
 
   const handleAcceptFriendRequest = async (requestKey: string, notificationId: string) => {
     try {
-      // Оптимизация: запускаем операции параллельно
-      const [acceptResult] = await Promise.all([
-        usersAPI.acceptFriendRequest(requestKey),
-        notificationsAPI.delete(notificationId)
-      ]);
-      
-      toast.success('Запрос принят');
-      
-      // Оптимизация: не ждем загрузки, просто удаляем из локального списка
+      // Сначала удаляем уведомление из UI для быстрого отклика
       setNotifications(prev => prev.filter(n => n.id !== notificationId));
+      
+      // Затем принимаем запрос и удаляем уведомление на сервере
+      await usersAPI.acceptFriendRequest(requestKey);
+      await notificationsAPI.delete(notificationId);
+      
+      // Удаляем все связанные уведомления о запросе в друзья от этого пользователя
+      setNotifications(prev => {
+        const friendRequest = prev.find(n => n.id === notificationId);
+        if (friendRequest && friendRequest.fromUserId) {
+          // Удаляем все уведомления friend_request от этого пользователя
+          return prev.filter(n => !(n.type === 'friend_request' && n.fromUserId === friendRequest.fromUserId));
+        }
+        return prev.filter(n => n.id !== notificationId);
+      });
+      
+      toast.success('Запрос принят. Теперь вы друзья!');
+      
+      // Проверяем достижение "Чипс-крендель" после принятия запроса
+      if (tracker) {
+        try {
+          const friendsData = await usersAPI.getFriends();
+          const friendsCount = friendsData.friends?.length || 0;
+          await tracker.checkFriendsCount(friendsCount);
+        } catch (error) {
+          console.error('Failed to check friends count after accepting request:', error);
+        }
+      }
       
       // Вызываем callback для обновления списка друзей
       if (onFriendRequestHandled) {
         onFriendRequestHandled();
       }
+      
+      // Перезагружаем уведомления для синхронизации с сервером
+      setTimeout(() => {
+        loadNotifications();
+      }, 500);
     } catch (error: any) {
       console.error('Accept friend request error:', error);
       const errorMsg = error.message || 'Ошибка';
@@ -75,12 +101,26 @@ export function NotificationsPanel({ onClose, onFriendRequestHandled }: Notifica
         toast.info('Запрос уже был обработан ранее');
         await notificationsAPI.delete(notificationId);
         setNotifications(prev => prev.filter(n => n.id !== notificationId));
+        // Удаляем все связанные уведомления
+        setNotifications(prev => {
+          const friendRequest = prev.find(n => n.id === notificationId);
+          if (friendRequest && friendRequest.fromUserId) {
+            return prev.filter(n => !(n.type === 'friend_request' && n.fromUserId === friendRequest.fromUserId));
+          }
+          return prev.filter(n => n.id !== notificationId);
+        });
         // Обновляем список друзей даже если запрос уже был обработан
         if (onFriendRequestHandled) {
           onFriendRequestHandled();
         }
+        // Перезагружаем уведомления
+        setTimeout(() => {
+          loadNotifications();
+        }, 500);
       } else {
         toast.error(errorMsg);
+        // В случае ошибки перезагружаем уведомления
+        loadNotifications();
       }
     }
   };
@@ -126,8 +166,14 @@ export function NotificationsPanel({ onClose, onFriendRequestHandled }: Notifica
       setNotifications(prev => prev.filter(n => n.id !== notificationId));
       await notificationsAPI.delete(notificationId);
     } catch (error: any) {
-      toast.error(error.message || 'Ошибка');
-      // В случае о��ибки перезагружаем список
+      const errorMsg = error.message || 'Ошибка';
+      // Если уведомление уже было удалено или не найдено - просто игнорируем
+      if (errorMsg.includes('Уведомление не найдено') || errorMsg.includes('already deleted')) {
+        console.warn('Notification already deleted, ignore:', notificationId);
+        return;
+      }
+      toast.error(errorMsg);
+      // В случае ошибки перезагружаем список
       loadNotifications();
     }
   };

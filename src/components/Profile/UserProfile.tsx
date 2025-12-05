@@ -18,6 +18,8 @@ import { compressImage } from '../../utils/imageCompression';
 import { AchievementsPanel } from './AchievementsPanel';
 import { ACHIEVEMENTS, UserAchievementData } from '../../utils/achievements';
 import { fetchAPI } from '../../utils/api';
+import { fixMediaUrl } from '../../utils/urlFix';
+import { useAchievements } from '../../contexts/AchievementsContext';
 
 interface UserProfileProps {
   userId?: string; // Если указан, показываем профиль другого пользователя
@@ -30,6 +32,7 @@ interface UserProfileProps {
 
 export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, showFriendsTab }: UserProfileProps) {
   const { user, signout, refreshUser, godModeEnabled, setGodModeEnabled } = useAuth();
+  const { tracker } = useAchievements();
   const [viewedUser, setViewedUser] = useState<User | null>(null);
   const [friends, setFriends] = useState<User[]>([]);
   const [favoriteRoom, setFavoriteRoom] = useState<Room | null>(null);
@@ -78,6 +81,7 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
       return () => clearInterval(interval);
     } else if (user && !userId) {
       // Загружаем достижения для своего профиля
+      console.log('UserProfile: Loading achievements for own profile, userId:', user.id);
       loadAchievements(user.id);
     }
   }, [userId, user?.id]);
@@ -146,10 +150,18 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
 
   const loadAchievements = async (targetUserId: string) => {
     try {
+      console.log('UserProfile: loadAchievements called for userId:', targetUserId);
       const data = await fetchAPI(`/achievements/${targetUserId}`);
+      console.log('UserProfile: Achievements data received:', data);
       setAchievementData(data);
-    } catch (error) {
-      console.error('Error loading achievements:', error);
+    } catch (error: any) {
+      console.error('UserProfile: Error loading achievements:', error);
+      // Устанавливаем пустые данные при ошибке
+      setAchievementData({
+        userId: targetUserId,
+        achievements: {},
+        lastUpdated: new Date().toISOString(),
+      });
     }
   };
 
@@ -215,11 +227,17 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
   const loadFriends = async () => {
     try {
       const data = await usersAPI.getFriends();
-      console.log('Loaded friends:', data.friends?.length || 0, 'friends');
+      const friendsCount = data.friends?.length || 0;
+      console.log('Loaded friends:', friendsCount, 'friends');
       if (data.friends && data.friends.length > 0) {
         console.log('Friends with avatars:', data.friends.filter((f: any) => f.avatar).length);
       }
       setFriends(data.friends || []);
+      
+      // Проверяем достижение "Чипс-крендель" при загрузке друзей (только для своего профиля)
+      if (tracker && !userId) {
+        await tracker.checkFriendsCount(friendsCount);
+      }
     } catch (error: any) {
       console.error('Failed to load friends:', error);
     }
@@ -617,13 +635,13 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
                   className={`w-32 h-32 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden ${(viewedUser as any).avatar ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
                   onClick={() => {
                     if ((viewedUser as any).avatar) {
-                      handleViewAvatar((viewedUser as any).avatar);
+                      handleViewAvatar(fixMediaUrl((viewedUser as any).avatar));
                     }
                   }}
                   title={(viewedUser as any).avatar ? 'Нажмите для просмотра' : ''}
                 >
                   {(viewedUser as any).avatar ? (
-                    <img src={(viewedUser as any).avatar} alt={viewedUser.username} className="w-full h-full object-cover" />
+                    <img src={fixMediaUrl((viewedUser as any).avatar)} alt={viewedUser.username} className="w-full h-full object-cover" onError={(e) => console.error('Avatar load error:', e)} />
                   ) : (
                     <UserIcon className="w-16 h-16" />
                   )}
@@ -690,7 +708,7 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
                         ))}
                       </div>
                       <p className="text-xs text-muted-foreground mt-1">
-                        Последние достижения (нажмите для просмотра всех)
+                        Все достижения
                       </p>
                     </div>
                   )}
@@ -1163,7 +1181,7 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
                         title={(friend as any).avatar ? 'Нажмите для просмотра' : ''}
                       >
                         {(friend as any).avatar ? (
-                          <img src={(friend as any).avatar} alt={friend.username} className="w-full h-full object-cover" />
+                          <img src={fixMediaUrl((friend as any).avatar)} alt={friend.username} className="w-full h-full object-cover" onError={(e) => console.error('Friend avatar load error:', e)} />
                         ) : (
                           <UserIcon className="w-5 h-5" />
                         )}
@@ -1295,6 +1313,15 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
   // Обычный профиль текущего пользователя
   return (
     <div className="h-full flex flex-col">
+      {/* Header с кнопкой "Назад" если профиль открыт из чата */}
+      {onBack && (
+        <div className="border-b p-4 flex items-center gap-3">
+          <Button variant="ghost" size="icon" onClick={onBack}>
+            <ArrowLeft className="w-5 h-5" />
+          </Button>
+          <h2 className="text-xl">Мой профиль</h2>
+        </div>
+      )}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
         <TabsList className="w-full grid grid-cols-3">
           <TabsTrigger value="profile">
@@ -1322,7 +1349,7 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
                       onClick={() => setShowAvatarMenu(!showAvatarMenu)}
                     >
                       {(user as any).avatar ? (
-                        <img src={(user as any).avatar} alt={user.username} className="w-full h-full object-cover" />
+                        <img src={fixMediaUrl((user as any).avatar)} alt={user.username} className="w-full h-full object-cover" onError={(e) => console.error('Avatar load error:', e)} />
                       ) : (
                         <UserIcon className="w-16 h-16" />
                       )}
@@ -1334,7 +1361,7 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
                           <button
                             onClick={() => {
                               setShowAvatarMenu(false);
-                              handleViewAvatar((user as any).avatar);
+                              handleViewAvatar(fixMediaUrl((user as any).avatar));
                             }}
                             className="w-full px-4 py-2 text-left hover:bg-accent transition-colors flex items-center gap-2"
                           >
@@ -1402,7 +1429,7 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
                         ))}
                       </div>
                       <p className="text-xs text-muted-foreground mt-1">
-                        Последние достижения (нажмите для просмотра всех)
+                        Все достижения
                       </p>
                     </div>
                   )}

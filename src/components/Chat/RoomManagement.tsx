@@ -5,6 +5,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
 import { toast } from '../ui/sonner';
 import { ArrowLeft, UserPlus, UserMinus, Pin, X, Trash2 } from '../ui/icons';
 
@@ -15,6 +16,7 @@ interface RoomManagementProps {
 
 export function RoomManagement({ room, onBack }: RoomManagementProps) {
   const { user } = useAuth();
+  const [clearHistoryDialogOpen, setClearHistoryDialogOpen] = useState(false);
   const [roomName, setRoomName] = useState(room.name);
   const [members, setMembers] = useState<User[]>([]);
   const [pinnedMessages, setPinnedMessages] = useState<Message[]>([]);
@@ -39,11 +41,17 @@ export function RoomManagement({ room, onBack }: RoomManagementProps) {
       const loadedMembers = memberData.map((data) => data.user).filter(Boolean);
       setMembers(loadedMembers);
 
-      // Загружаем закрепленное сообщение
-      if (room.pinned_message_id) {
+      // Загружаем историю закрепленных сообщений
+      const pinnedIds = room.pinned_message_ids || (room.pinned_message_id ? [room.pinned_message_id] : []);
+      if (pinnedIds.length > 0) {
         const messagesData = await messagesAPI.get(room.id);
-        const pinned = messagesData.messages.filter((msg: Message) => msg.id === room.pinned_message_id);
-        setPinnedMessages(pinned);
+        // Загружаем все закрепленные сообщения из истории
+        const pinned = messagesData.messages.filter((msg: Message) => pinnedIds.includes(msg.id));
+        // Сортируем по порядку в истории (последнее закрепленное - первое)
+        const sortedPinned = pinnedIds
+          .map(id => pinned.find(msg => msg.id === id))
+          .filter(Boolean) as Message[];
+        setPinnedMessages(sortedPinned);
       }
     } catch (error) {
       console.error('Failed to load room data:', error);
@@ -65,14 +73,24 @@ export function RoomManagement({ room, onBack }: RoomManagementProps) {
     }
   };
 
-  const handleSearchUsers = async () => {
-    if (!searchQuery.trim()) return;
+  const handleSearchUsers = async (query?: string) => {
+    const searchText = query ?? searchQuery;
+    if (!searchText.trim() || searchText.length < 2) {
+      setSearchResults([]);
+      return;
+    }
 
     try {
-      const data = await usersAPI.search(searchQuery);
-      setSearchResults(data.users.filter((u: User) => !room.members.includes(u.id)));
+      const data = await usersAPI.search(searchText);
+      // Фильтруем: исключаем себя и уже добавленных участников
+      const users = data.users || [];
+      setSearchResults(users.filter((u: User) => 
+        u.id !== user?.id && !room.members.includes(u.id)
+      ));
     } catch (error: any) {
+      console.error('Ошибка поиска:', error);
       toast.error('Ошибка поиска');
+      setSearchResults([]);
     }
   };
 
@@ -110,9 +128,11 @@ export function RoomManagement({ room, onBack }: RoomManagementProps) {
     }
   };
 
-  const handleClearHistory = async () => {
-    if (!confirm('Очистить всю историю чата? Это действие необратимо!')) return;
+  const handleClearHistory = () => {
+    setClearHistoryDialogOpen(true);
+  };
 
+  const confirmClearHistory = async () => {
     try {
       const messagesData = await messagesAPI.get(room.id);
       const messages = messagesData.messages;
@@ -123,8 +143,10 @@ export function RoomManagement({ room, onBack }: RoomManagementProps) {
       }
 
       toast.success('История чата очищена');
+      setClearHistoryDialogOpen(false);
     } catch (error: any) {
       toast.error(error.message || 'Ошибка очистки истории');
+      setClearHistoryDialogOpen(false);
     }
   };
 
@@ -188,11 +210,14 @@ export function RoomManagement({ room, onBack }: RoomManagementProps) {
               <div className="flex gap-2">
                 <Input
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    handleSearchUsers(e.target.value);
+                  }}
                   placeholder="Поиск пользователя..."
                   onKeyDown={(e) => e.key === 'Enter' && handleSearchUsers()}
                 />
-                <Button onClick={handleSearchUsers}>
+                <Button onClick={() => handleSearchUsers()}>
                   <UserPlus className="w-4 h-4" />
                 </Button>
               </div>
@@ -253,17 +278,72 @@ export function RoomManagement({ room, onBack }: RoomManagementProps) {
           <CardContent>
             {pinnedMessages.length > 0 ? (
               <div className="space-y-2">
-                {pinnedMessages.map((msg) => (
-                  <div key={msg.id} className="border rounded-lg p-3 flex items-start justify-between">
-                    <div className="flex-1">
-                      <p className="text-sm text-muted-foreground">{msg.sender_username}</p>
-                      <p className="text-sm">{msg.content}</p>
+                {pinnedMessages.map((msg) => {
+                  // Функция для форматирования контента закрепленного сообщения
+                  const formatPinnedContent = (message: Message): string => {
+                    const messageType = message.type;
+                    
+                    // Проверка типа сообщения (приоритет)
+                    if (messageType === 'video') {
+                      return '🎥 Видео';
+                    }
+                    if (messageType === 'voice' || messageType === 'audio') {
+                      return '🎤 Голосовое';
+                    }
+                    
+                    const content = message.content;
+                    
+                    // Проверка на markdown изображение
+                    if (content.startsWith('![') && content.includes('](')) {
+                      return '🖼️ Изображение';
+                    }
+                    
+                    // Проверка на URL медиа (любой хост)
+                    if (content.startsWith('http://') || content.startsWith('https://')) {
+                      // Проверяем по пути в URL
+                      if (content.includes('/voice/') || content.includes('/audio/') || content.includes('voice') || content.includes('audio')) {
+                        return '🎤 Голосовое';
+                      }
+                      if (content.includes('/video/') || content.includes('video')) {
+                        return '🎥 Видео';
+                      }
+                      if (content.includes('/images/') || content.includes('/image/') || content.includes('images') || content.includes('image')) {
+                        return '🖼️ Изображение';
+                      }
+                      // Если это просто URL без явного типа, показываем как файл
+                      if (content.includes('/storage/v1/object/')) {
+                        return '📎 Файл';
+                      }
+                    }
+                    
+                    // Обычный текст - обрезаем до 100 символов
+                    return content.length > 100 ? content.substring(0, 100) + '...' : content;
+                  };
+
+                  return (
+                    <div key={msg.id} className="border rounded-lg p-3 flex items-start justify-between">
+                      <div className="flex-1">
+                        <p className="text-sm text-muted-foreground">{msg.sender_username}</p>
+                        <p className="text-sm">{formatPinnedContent(msg)}</p>
+                      </div>
+                      <Button 
+                        size="sm" 
+                        variant="ghost" 
+                        onClick={async () => {
+                          try {
+                            await roomsAPI.unpinMessage(room.id, msg.id);
+                            toast.success('Сообщение откреплено');
+                            loadRoomData();
+                          } catch (error: any) {
+                            toast.error(error.message || 'Ошибка открепления');
+                          }
+                        }}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
                     </div>
-                    <Button size="sm" variant="ghost" onClick={handleUnpinMessage}>
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">Нет закрепленных сообщений</p>
@@ -288,6 +368,28 @@ export function RoomManagement({ room, onBack }: RoomManagementProps) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Диалог подтверждения очистки истории */}
+      <Dialog open={clearHistoryDialogOpen} onOpenChange={setClearHistoryDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Очистить историю чата?</DialogTitle>
+            <DialogDescription>
+              Вы уверены, что хотите очистить всю историю чата "{room.name}"? 
+              <br />
+              Это действие необратимо. Все сообщения будут удалены.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => setClearHistoryDialogOpen(false)}>
+              Отмена
+            </Button>
+            <Button variant="destructive" onClick={confirmClearHistory}>
+              Очистить
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

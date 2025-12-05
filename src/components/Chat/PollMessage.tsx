@@ -8,6 +8,7 @@ import { pollsAPI, usersAPI, User } from '../../utils/api';
 import { toast } from '../ui/sonner';
 import { useAuth } from '../../contexts/AuthContext';
 import { CheckCircle2, Users } from '../ui/icons';
+import { fixMediaUrl } from '../../utils/urlFix';
 
 interface PollMessageProps {
   content: string;
@@ -306,7 +307,7 @@ export function PollMessage({ content, pollId, onVote }: PollMessageProps) {
                 <div key={voter.id} className="flex items-center gap-3 p-2 rounded hover:bg-accent">
                   <Avatar className="w-10 h-10">
                     {(voter as any).avatar ? (
-                      <AvatarImage src={(voter as any).avatar} alt={voter.username} />
+                      <AvatarImage src={fixMediaUrl((voter as any).avatar)} alt={voter.username} />
                     ) : (
                       <AvatarFallback className="bg-primary/10 text-primary">
                         {((voter as any).display_name || voter.username).charAt(0).toUpperCase()}

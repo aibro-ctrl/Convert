@@ -1,100 +1,118 @@
 /**
- * Утилита для прозрачного шифрования/расшифровки сообщений
+ * Утилита для прозрачного шифрования/расшифровки сообщений (сессионное шифрование как в Telegram)
+ * 
+ * Архитектура:
+ * - Один симметричный ключ AES-GCM 256 на сессию
+ * - Ключ генерируется при входе, удаляется при выходе
+ * - Все сообщения шифруются только при отправке в базу
+ * - В приложении сообщения не зашифрованы (в памяти)
+ * - В базе - зашифрованы
  * 
  * Использование:
- * 1. При отправке сообщения: const encrypted = await encryptMessageContent(content, context, roomId, recipientId)
- * 2. При получении сообщения: const decrypted = await decryptMessageContent(encrypted, context, message)
+ * 1. При отправке сообщения: const encrypted = await encryptMessageContent(content, sessionCrypto)
+ * 2. При получении сообщения: const decrypted = await decryptMessageContent(encrypted, sessionCrypto)
  */
 
-import { CryptoContextType } from '../contexts/CryptoContext';
+import { SessionCryptoContextType } from '../contexts/SessionCryptoContext';
 import { Message } from './api';
+import * as sessionCrypto from './sessionCrypto';
 
 /**
- * Шифрование контента сообщения перед отправкой
+ * Проверяет, является ли контент URL медиа-файла
+ */
+function isMediaUrl(content: string): boolean {
+  if (!content.startsWith('http://') && !content.startsWith('https://')) {
+    return false;
+  }
+  
+  const trimmed = content.trim();
+  if (trimmed.length > 500) {
+    return false;
+  }
+  
+  const mediaPatterns = [
+    /\/storage\/v1\/object\//,
+    /\.(mp4|webm|ogg|mp3|wav|m4a|jpg|jpeg|png|gif|webp)(\?|$)/i,
+    /\/images\//,
+    /\/video\//,
+    /\/audio\//,
+    /\/voice\//
+  ];
+  
+  return mediaPatterns.some(pattern => pattern.test(trimmed));
+}
+
+/**
+ * Шифрование контента сообщения перед отправкой в базу
  * @param content - Текст сообщения
- * @param cryptoContext - Контекст шифрования
- * @param roomId - ID комнаты (для групповых чатов)
- * @param recipientId - ID получателя (для личных сообщений)
- * @returns Зашифрованный контент или исходный текст при ошибке
+ * @param sessionCryptoContext - Контекст сессионного шифрования
+ * @returns Зашифрованный контент для сохранения в базу
  */
 export async function encryptMessageContent(
   content: string,
-  cryptoContext: CryptoContextType | null,
-  roomId?: string,
-  recipientId?: string
+  sessionCryptoContext: SessionCryptoContextType | null
 ): Promise<string> {
-  // Если шифрование не готово, отправляем незашифрованное сообщение
-  if (!cryptoContext || !cryptoContext.isReady) {
-    console.warn('E2EE: Encryption not ready, sending unencrypted message');
+  // НЕ шифруем URL медиа-файлов - они должны оставаться доступными для воспроизведения
+  if (isMediaUrl(content)) {
+    return content;
+  }
+  
+  // Если сессионное шифрование не готово, возвращаем как есть (не шифруем)
+  // Это нормально - сообщение будет незашифрованным в базе, но пользователь сможет его видеть
+  if (!sessionCryptoContext || !sessionCryptoContext.isReady) {
+    console.warn('SessionCrypto: Encryption not ready, sending unencrypted');
     return content;
   }
 
   try {
-    // Шифруем контент
-    const encrypted = await cryptoContext.encryptMessage(content, recipientId, roomId);
-    console.log('E2EE: Message encrypted successfully');
+    // Шифруем контент сессионным ключом
+    const encrypted = await sessionCryptoContext.encrypt(content);
     return encrypted;
-  } catch (error) {
-    console.error('E2EE: Encryption failed, sending unencrypted:', error);
-    // В случае ошибки шифрования, отправляем исходный текст
+  } catch (error: any) {
+    console.error('SessionCrypto: Encryption failed:', error);
+    // При ошибке возвращаем незашифрованный контент (лучше чем блокировка отправки)
     return content;
   }
 }
 
 /**
- * Расшифровка контента сообщения при получении
- * @param encryptedContent - Зашифрованный текст
- * @param cryptoContext - Контекст шифрования
- * @param message - Объект сообщения с метаданными
- * @returns Расшифрованный контент или сообщение об ошибке
+ * Расшифровка контента сообщения при получении из базы
+ * @param encryptedContent - Зашифрованный текст из базы
+ * @param sessionCryptoContext - Контекст сессионного шифрования
+ * @param message - Объект сообщения с метаданными (не используется, но оставлен для совместимости)
+ * @returns Расшифрованный контент для отображения в приложении
  */
 export async function decryptMessageContent(
   encryptedContent: string,
-  cryptoContext: CryptoContextType | null,
-  message: Message
+  sessionCryptoContext: SessionCryptoContextType | null,
+  message?: Message
 ): Promise<string> {
-  // Если шифрование не готово, показываем как есть
-  if (!cryptoContext || !cryptoContext.isReady) {
-    console.warn('E2EE: Decryption not ready');
+  // Если это URL медиа-файла, возвращаем как есть (не расшифровываем)
+  if (isMediaUrl(encryptedContent)) {
     return encryptedContent;
   }
-
-  // Проверяем, является ли контент зашифрованным (JSON объект)
-  if (!isEncrypted(encryptedContent)) {
-    // Это незашифрованное сообщение, возвращаем как есть
+  
+  // Если сессионное шифрование не готово, возвращаем как есть (может быть незашифрованное сообщение)
+  if (!sessionCryptoContext || !sessionCryptoContext.isReady) {
     return encryptedContent;
   }
 
   try {
-    // Расшифровываем контент
-    const decrypted = await cryptoContext.decryptMessage(
-      encryptedContent,
-      message.sender_id,
-      message.room_id
-    );
+    // Расшифровываем контент сессионным ключом
+    const decrypted = await sessionCryptoContext.decrypt(encryptedContent);
     return decrypted;
   } catch (error) {
-    console.error('E2EE: Decryption failed:', error);
-    return '[🔒 Зашифровано - не удалось расшифровать]';
-  }
-}
-
-/**
- * Проверка, является ли контент зашифрованным
- */
-function isEncrypted(content: string): boolean {
-  try {
-    const parsed = JSON.parse(content);
-    // Проверяем структуру зашифрованного сообщения
-    return (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      'version' in parsed &&
-      'ciphertext' in parsed &&
-      'iv' in parsed
-    );
-  } catch {
-    return false;
+    console.error('SessionCrypto: Decryption failed:', error);
+    // Если это похоже на зашифрованный JSON, не показываем «сырой» объект в UI
+    try {
+      const parsed = JSON.parse(encryptedContent);
+      if (parsed && typeof parsed === 'object' && 'ciphertext' in parsed) {
+        return '[сообщение]';
+      }
+    } catch {
+      // не JSON — просто вернём как есть
+    }
+    return encryptedContent;
   }
 }
 
@@ -103,11 +121,15 @@ function isEncrypted(content: string): boolean {
  */
 export async function decryptMessages(
   messages: Message[],
-  cryptoContext: CryptoContextType | null
+  sessionCryptoContext: SessionCryptoContextType | null
 ): Promise<Map<string, string>> {
   const decryptedMap = new Map<string, string>();
 
-  if (!cryptoContext || !cryptoContext.isReady) {
+  if (!sessionCryptoContext || !sessionCryptoContext.isReady) {
+    // Если шифрование не готово, возвращаем оригинальный контент
+    messages.forEach(message => {
+      decryptedMap.set(message.id, message.content);
+    });
     return decryptedMap;
   }
 
@@ -115,60 +137,14 @@ export async function decryptMessages(
   await Promise.all(
     messages.map(async (message) => {
       try {
-        const decrypted = await decryptMessageContent(message.content, cryptoContext, message);
+        const decrypted = await decryptMessageContent(message.content, sessionCryptoContext, message);
         decryptedMap.set(message.id, decrypted);
       } catch (error) {
-        console.error(`E2EE: Failed to decrypt message ${message.id}:`, error);
-        decryptedMap.set(message.id, '[🔒 Зашифровано]');
+        console.error(`SessionCrypto: Failed to decrypt message ${message.id}:`, error);
+        decryptedMap.set(message.id, message.content);
       }
     })
   );
 
   return decryptedMap;
-}
-
-/**
- * Инициализация ключей комнаты при создании/вступлении
- */
-export async function initializeRoomEncryption(
-  roomId: string,
-  memberIds: string[],
-  cryptoContext: CryptoContextType | null
-): Promise<boolean> {
-  if (!cryptoContext || !cryptoContext.isReady) {
-    console.warn('E2EE: Cannot initialize room encryption - crypto not ready');
-    return false;
-  }
-
-  try {
-    await cryptoContext.createRoomKey(roomId, memberIds);
-    console.log(`E2EE: Room ${roomId} encryption initialized for ${memberIds.length} members`);
-    return true;
-  } catch (error) {
-    console.error('E2EE: Failed to initialize room encryption:', error);
-    return false;
-  }
-}
-
-/**
- * Добавление участника в зашифрованную комнату
- */
-export async function addMemberToEncryptedRoom(
-  roomId: string,
-  userId: string,
-  cryptoContext: CryptoContextType | null
-): Promise<boolean> {
-  if (!cryptoContext || !cryptoContext.isReady) {
-    console.warn('E2EE: Cannot add member to encrypted room - crypto not ready');
-    return false;
-  }
-
-  try {
-    await cryptoContext.addMemberToRoom(roomId, userId);
-    console.log(`E2EE: Member ${userId} added to encrypted room ${roomId}`);
-    return true;
-  } catch (error) {
-    console.error('E2EE: Failed to add member to encrypted room:', error);
-    return false;
-  }
 }

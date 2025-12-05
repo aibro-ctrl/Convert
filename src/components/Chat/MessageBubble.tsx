@@ -1,16 +1,20 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Message, messagesAPI, roomsAPI } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { useSessionCrypto } from '../../contexts/SessionCryptoContext';
+import { decryptMessageContent, encryptMessageContent } from '../../utils/messageEncryption';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Input } from '../ui/input';
 import { toast } from '../ui/sonner';
-import { Smile, Reply, Pin, Trash2, Edit, MoreHorizontal, Copy } from '../ui/icons';
+import { Smile, Reply, Pin, Trash2, Edit, MoreHorizontal, Copy, Star, RefreshCw } from '../ui/icons';
+import { quickFix } from '../../utils/keyboardLayout';
 import { PollMessage } from './PollMessage';
 import { SimpleAudioPlayer } from './SimpleAudioPlayer';
 import { VideoPlayer } from './VideoPlayer';
+import { fixMediaUrl } from '../../utils/urlFix';
 
 interface MessageBubbleProps {
   message: Message;
@@ -34,12 +38,39 @@ export function MessageBubble({
   onEdit
 }: MessageBubbleProps) {
   const { user } = useAuth();
+  const sessionCrypto = useSessionCrypto();
   const [showActions, setShowActions] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [decryptedContent, setDecryptedContent] = useState<string>(message.content);
   const [editedContent, setEditedContent] = useState(message.content);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
   const longPressTimer = React.useRef<NodeJS.Timeout | null>(null);
+  
+  // Расшифровка сообщения при загрузке
+  useEffect(() => {
+    const decryptMessage = async () => {
+      // Для медиа-файлов (video, voice, audio) используем оригинальный content (URL не шифруется)
+      if (message.type === 'video' || message.type === 'voice' || message.type === 'audio') {
+        setDecryptedContent(message.content);
+        setEditedContent(message.content);
+        return;
+      }
+      
+      // Расшифровываем сообщение при получении из базы
+      try {
+        const decrypted = await decryptMessageContent(message.content, sessionCrypto, message);
+        setDecryptedContent(decrypted);
+        setEditedContent(decrypted); // Также обновляем для редактирования
+      } catch (error) {
+        console.error('SessionCrypto: Failed to decrypt message:', error);
+        // При ошибке показываем оригинал (может быть незашифрованное сообщение)
+        setDecryptedContent(message.content);
+      }
+    };
+    
+    decryptMessage();
+  }, [message.content, message.id, message.type, sessionCrypto]);
   
   const isOwnMessage = message.sender_id === user?.id;
   const canModerate = user && ['admin', 'moderator'].includes(user.role);
@@ -60,13 +91,16 @@ export function MessageBubble({
   };
 
   const handleEdit = async () => {
-    if (!editedContent.trim() || editedContent === message.content) {
+    if (!editedContent.trim() || editedContent === decryptedContent) {
       setIsEditing(false);
       return;
     }
 
     try {
-      await messagesAPI.edit(message.id, editedContent);
+      // Шифруем отредактированное сообщение перед отправкой в базу
+      const encryptedEditedContent = await encryptMessageContent(editedContent, sessionCrypto);
+      
+      await messagesAPI.edit(message.id, encryptedEditedContent);
       setIsEditing(false);
       // Немедленно обновляем сообщения
       if (onEdit) {
@@ -80,6 +114,78 @@ export function MessageBubble({
   const handleUserClick = () => {
     if (onUserClick) {
       onUserClick(message.sender_id);
+    }
+  };
+
+  const handleAddToFavorites = async () => {
+    try {
+      // Получаем или создаем комнату избранного
+      const favoritesRoom = await roomsAPI.getOrCreateFavorites();
+      
+      // Используем расшифрованный контент для избранного
+      let favoritesContent = decryptedContent;
+      
+      // Если это медиафайл, сохраняем URL (не шифруем)
+      if (message.type === 'video' || message.type === 'voice' || message.type === 'audio') {
+        favoritesContent = message.content; // Медиа-файлы не шифруются
+      } else if (message.content.startsWith('![') && message.content.includes('](')) {
+        // Если это markdown изображение, сохраняем как есть (не шифруем)
+        favoritesContent = message.content;
+      } else {
+        // Шифруем текстовый контент перед отправкой в базу
+        favoritesContent = await encryptMessageContent(decryptedContent, sessionCrypto);
+      }
+      
+      // Отправляем сообщение в избранное
+      await messagesAPI.send(
+        favoritesRoom.id,
+        favoritesContent,
+        message.type,
+        undefined
+      );
+      
+      toast.success('Сообщение добавлено в избранное');
+      setShowEmojiPicker(false);
+    } catch (error: any) {
+      console.error('Ошибка добавления в избранное:', error);
+      toast.error(error.message || 'Не удалось добавить в избранное');
+    }
+  };
+
+  const handleQuickFix = async () => {
+    try {
+      // Применяем быстрое исправление к расшифрованному контенту
+      const fixedContent = quickFix(decryptedContent);
+      
+      if (fixedContent === decryptedContent) {
+        toast.info('Текст не требует исправления');
+        setShowEmojiPicker(false);
+        return;
+      }
+
+      // Обновляем отредактированный контент
+      setEditedContent(fixedContent);
+      
+      // Шифруем исправленное сообщение перед отправкой в базу
+      const encryptedFixedContent = await encryptMessageContent(fixedContent, sessionCrypto);
+      
+      // Отправляем исправленное сообщение
+      await messagesAPI.edit(message.id, encryptedFixedContent);
+      
+      // Обновляем локальное состояние
+      setDecryptedContent(fixedContent);
+      setEditedContent(fixedContent);
+      
+      toast.success('Сообщение исправлено');
+      setShowEmojiPicker(false);
+      
+      // Немедленно обновляем сообщения
+      if (onEdit) {
+        onEdit();
+      }
+    } catch (error: any) {
+      console.error('Ошибка быстрого исправления:', error);
+      toast.error(error.message || 'Не удалось исправить сообщение');
     }
   };
 
@@ -164,10 +270,13 @@ export function MessageBubble({
 
   const handleCopyMessage = async () => {
     try {
-      await navigator.clipboard.writeText(message.content);
+      // Копируем расшифрованное содержимое
+      await navigator.clipboard.writeText(decryptedContent);
       setShowEmojiPicker(false);
+      toast.success('Сообщение скопировано');
     } catch (error) {
       console.error('Не удалось скопировать сообщение:', error);
+      toast.error('Не удалось скопировать сообщение');
     }
   };
 
@@ -179,13 +288,17 @@ export function MessageBubble({
     
     if (imageMatch) {
       const imageUrl = imageMatch[1];
+      const fixedImageUrl = fixMediaUrl(imageUrl);
       return (
         <img 
-          src={imageUrl} 
+          src={fixedImageUrl} 
           alt="Изображение" 
           className="max-w-full max-h-96 rounded-lg cursor-pointer object-contain"
-          onClick={() => window.open(imageUrl, '_blank')}
+          onClick={() => window.open(fixedImageUrl, '_blank')}
           loading="lazy"
+          onError={(e) => {
+            console.error('Image load error:', e, 'URL:', fixedImageUrl);
+          }}
         />
       );
     }
@@ -213,14 +326,18 @@ export function MessageBubble({
         
         // Добавляем изображение
         const imageUrl = match[1];
+        const fixedImageUrl = fixMediaUrl(imageUrl);
         parts.push(
           <img 
             key={`img-${match.index}`}
-            src={imageUrl} 
+            src={fixedImageUrl} 
             alt="Изображение" 
             className="max-w-full max-h-96 rounded-lg cursor-pointer object-contain my-2"
-            onClick={() => window.open(imageUrl, '_blank')}
+            onClick={() => window.open(fixedImageUrl, '_blank')}
             loading="lazy"
+            onError={(e) => {
+              console.error('Image load error:', e, 'URL:', fixedImageUrl);
+            }}
           />
         );
         
@@ -269,6 +386,23 @@ export function MessageBubble({
 
   const quickEmojis = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
 
+  // Сообщение состоит только из эмодзи (для красивого отображения)
+  const isEmojiOnly = useMemo(() => {
+    const text = decryptedContent.trim();
+    if (!text) return false;
+    // Простая эвристика: немного символов и только emoji/пробелы
+    if (text.length > 8) return false;
+    const emojiRegex = /\p{Extended_Pictographic}/u;
+    // Должна быть хотя бы одна emoji
+    if (!emojiRegex.test(text)) return false;
+    // И не должно быть букв/цифр
+    const nonEmojiRegex = /[a-zA-Zа-яА-Я0-9]/u;
+    if (nonEmojiRegex.test(text)) return false;
+    return true;
+  }, [decryptedContent]);
+
+  const [reactionDetails, setReactionDetails] = useState<{ emoji: string; userIds: string[] } | null>(null);
+
   // Мемоизированные значения для оптимизации
   const displayName = useMemo(() => {
     return message.sender_display_name || message.sender_username;
@@ -297,7 +431,7 @@ export function MessageBubble({
           onClick={handleUserClick}
         >
           {message.sender_avatar ? (
-            <AvatarImage src={message.sender_avatar} alt={displayName} />
+            <AvatarImage src={fixMediaUrl(message.sender_avatar)} alt={displayName} />
           ) : (
             <AvatarFallback className="bg-primary/10 text-primary">
               {initials}
@@ -328,23 +462,37 @@ export function MessageBubble({
                 Ответ на {replyToMessage.sender_display_name || replyToMessage.sender_username}
               </span>
               <span className="text-foreground/80 line-clamp-1">
-                {replyToMessage.content.substring(0, 50)}
-                {replyToMessage.content.length > 50 ? '...' : ''}
+                {(() => {
+                  // Расшифровываем контент ответа для превью
+                  try {
+                    // Для превью ответа показываем оригинальный контент (расшифровка произойдет при необходимости)
+                    return replyToMessage.content.substring(0, 50) + (replyToMessage.content.length > 50 ? '...' : '');
+                  } catch {
+                    return '[🔒 Зашифровано]';
+                  }
+                })()}
               </span>
             </div>
           )}
 
           {/* Message bubble */}
           <div
-            className={`${message.type === 'video' ? 'p-0' : 'rounded-lg px-4 py-2'} relative ${
-              message.type === 'video' ? '' : (
-                isOwnMessage
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted'
-              )
+            className={`relative overflow-hidden ${
+              message.type === 'video' ? 'p-0 rounded-2xl' : 'rounded-2xl px-4 py-2'
+            } ${
+              message.type === 'video'
+                ? ''
+                : isOwnMessage
+                  ? 'shadow-lg'
+                  : 'bg-muted/90 border border-border/70 shadow-sm text-foreground'
             } ${isPinned ? 'ring-2 ring-yellow-500' : ''} ${
               isMentioned && !isOwnMessage ? 'ring-2 ring-yellow-300 dark:ring-yellow-700' : ''
-            }`}
+            } transition-transform duration-200 ease-out group-hover:-translate-y-0.5`}
+            style={
+              message.type !== 'video' && isOwnMessage
+                ? { backgroundColor: '#1d9bf0', color: '#ffffff' }
+                : undefined
+            }
           >
             {isPinned && (
               <div className="flex items-center gap-1 text-xs mb-1 opacity-70">
@@ -364,7 +512,7 @@ export function MessageBubble({
                       handleEdit();
                     } else if (e.key === 'Escape') {
                       setIsEditing(false);
-                      setEditedContent(message.content);
+                      setEditedContent(decryptedContent);
                     }
                   }}
                   className="text-sm"
@@ -374,7 +522,7 @@ export function MessageBubble({
                   <Button size="sm" onClick={handleEdit}>Сохранить</Button>
                   <Button size="sm" variant="outline" onClick={() => {
                     setIsEditing(false);
-                    setEditedContent(message.content);
+                    setEditedContent(decryptedContent);
                   }}>Отмена</Button>
                 </div>
               </div>
@@ -392,19 +540,23 @@ export function MessageBubble({
                 ) : message.type === 'voice' ? (
                   <div className="space-y-2">
                     <p className="text-sm opacity-70">🎤 Голосовое сообщение</p>
-                    <SimpleAudioPlayer src={message.content} />
+                    <SimpleAudioPlayer src={fixMediaUrl(message.content)} />
                   </div>
                 ) : message.type === 'video' ? (
                   <div className="space-y-2">
                     <p className="text-sm opacity-70">🎥 Видео</p>
-                    <VideoPlayer src={message.content} />
+                    <VideoPlayer src={fixMediaUrl(message.content)} />
+                  </div>
+                ) : isEmojiOnly ? (
+                  <div className="whitespace-pre-wrap break-words text-4xl md:text-5xl leading-none animate-emoji-pop">
+                    {decryptedContent}
                   </div>
                 ) : (
                   <div className="whitespace-pre-wrap break-words">
-                    {renderContent(message.content)}
+                    {renderContent(decryptedContent)}
                   </div>
                 )}
-                <div className="text-xs opacity-70 mt-1">
+                <div className="text-[11px] mt-1 text-foreground/80">
                   {new Date(message.created_at).toLocaleTimeString('ru-RU', {
                     hour: '2-digit',
                     minute: '2-digit',
@@ -418,16 +570,52 @@ export function MessageBubble({
           {/* Reactions */}
           {message.reactions && Object.keys(message.reactions).length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">
-              {Object.entries(message.reactions).map(([emoji, userIds]) => (
-                <Badge
-                  key={emoji}
-                  variant="secondary"
-                  className="text-xs cursor-pointer hover:bg-accent"
-                  onClick={() => handleReaction(emoji)}
-                >
-                  {emoji} {userIds.length}
-                </Badge>
-              ))}
+              {Object.entries(message.reactions).map(([emoji, userIds]) => {
+                const isCurrentUserReacted = userIds.includes(user?.id || '');
+                return (
+                  <Badge
+                    key={emoji}
+                    variant="secondary"
+                    className={`text-xs cursor-pointer hover:bg-accent transition-transform duration-150 hover:scale-110 ${
+                      isCurrentUserReacted ? 'border border-primary/60 bg-primary/5' : ''
+                    } animate-reaction-pop`}
+                    onClick={() => handleReaction(emoji)}
+                    onMouseDown={(e) => {
+                      // Долгое нажатие для просмотра деталей реакции
+                      e.preventDefault();
+                      setReactionDetails({ emoji, userIds });
+                    }}
+                  >
+                    <span className="mr-1">{emoji}</span>
+                    <span>{userIds.length}</span>
+                  </Badge>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Reaction details (кто поставил) */}
+          {reactionDetails && (
+            <div className="mt-1 px-2 py-1 rounded-lg bg-background/90 border border-border text-xs text-muted-foreground shadow-sm">
+              <span className="font-medium mr-1">Реакция {reactionDetails.emoji}:</span>
+              {(() => {
+                const { userIds } = reactionDetails;
+                const you = userIds.includes(user?.id || '');
+                const othersCount = you ? userIds.length - 1 : userIds.length;
+                if (you && othersCount > 0) {
+                  return <>Вы и ещё {othersCount}</>;
+                }
+                if (you && othersCount === 0) {
+                  return <>Только вы</>;
+                }
+                return <>Пользователей: {userIds.length}</>;
+              })()}
+              <button
+                className="ml-2 text-[10px] uppercase tracking-wide text-primary hover:underline"
+                onClick={() => setReactionDetails(null)}
+              >
+                скрыть
+              </button>
             </div>
           )}
 
@@ -442,7 +630,7 @@ export function MessageBubble({
               
               {/* Context Menu */}
               <div 
-                className="fixed z-50 w-56 p-2 bg-background border border-border rounded-lg shadow-lg"
+                className="fixed z-50 w-64 p-3 bg-background/95 border border-border/80 rounded-2xl shadow-xl animate-context-menu-pop"
                 style={{
                   top: `${menuPosition.y}px`,
                   left: `${menuPosition.x}px`,
@@ -460,7 +648,7 @@ export function MessageBubble({
                             key={emoji}
                             variant="ghost"
                             size="sm"
-                            className="h-8 w-8 p-0 hover:bg-accent"
+                            className="h-8 w-8 p-0 hover:bg-accent text-xl transition-transform duration-150 hover:scale-125 active:scale-100 animate-reaction-pop"
                             onClick={() => handleReaction(emoji)}
                           >
                             {emoji}
@@ -492,6 +680,29 @@ export function MessageBubble({
                       <Copy className="w-4 h-4 mr-2" />
                       Копировать
                     </Button>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full justify-start h-8"
+                      onClick={handleAddToFavorites}
+                    >
+                      <Star className="w-4 h-4 mr-2" />
+                      Добавить в избранное
+                    </Button>
+
+                    {/* Быстрое исправление - доступно для своих сообщений или модераторам */}
+                    {(isOwnMessage || canModerate) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-start h-8"
+                        onClick={handleQuickFix}
+                      >
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                        Быстрое исправление
+                      </Button>
+                    )}
 
                     {isOwnMessage && (
                       <Button

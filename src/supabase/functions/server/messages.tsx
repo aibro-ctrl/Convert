@@ -246,7 +246,8 @@ export async function sendMessage(
       room.last_message = {
         content: content.substring(0, 100), // Ограничиваем длину превью
         sender_username: user.display_name || user.username,
-        created_at: message.created_at
+        created_at: message.created_at,
+        type: message.type // Добавляем тип сообщения для правильного отображения в превью
       };
 
       await kv.set(`room:${roomId}`, room);

@@ -1,13 +1,16 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Button } from '../ui/button';
 import { Slider } from '../ui/slider';
 import { Play, Pause, Volume2 } from '../ui/icons';
+import { fixMediaUrl } from '../../utils/urlFix';
 
 interface SimpleAudioPlayerProps {
   src: string;
 }
 
 export function SimpleAudioPlayer({ src }: SimpleAudioPlayerProps) {
+  // Исправляем URL перед использованием
+  const fixedSrc = useMemo(() => fixMediaUrl(src), [src]);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(1);
@@ -68,10 +71,13 @@ export function SimpleAudioPlayer({ src }: SimpleAudioPlayerProps) {
     <div className="flex flex-col gap-2 p-4 bg-gradient-to-br from-primary/5 to-primary/10 rounded-xl border border-primary/20 min-w-[250px] shadow-sm">
       <audio
         ref={audioRef}
-        src={src}
+        src={fixedSrc}
         onEnded={() => setIsPlaying(false)}
         onPause={() => setIsPlaying(false)}
         onPlay={() => setIsPlaying(true)}
+        onError={(e) => {
+          console.error('Audio playback error:', e, 'URL:', fixedSrc);
+        }}
       />
       
       <div className="flex items-center gap-3">

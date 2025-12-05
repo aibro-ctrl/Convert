@@ -41,28 +41,79 @@ export function AchievementsPanel({ userId }: AchievementsPanelProps) {
   const [selectedCategory, setSelectedCategory] = useState<AchievementCategory | 'all'>('all');
 
   useEffect(() => {
-    loadAchievements();
+    if (userId) {
+      loadAchievements();
+      // Обновляем достижения каждые 5 секунд для real-time обновлений
+      const interval = setInterval(() => {
+        loadAchievements();
+      }, 5000);
+      return () => clearInterval(interval);
+    }
   }, [userId]);
 
   const loadAchievements = async () => {
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
+    
     try {
+      console.log('AchievementsPanel: Loading achievements for user:', userId);
+      setLoading(true);
       const data = await fetchAPI(`/achievements/${userId}`);
-      setAchievementData(data);
-    } catch (error) {
-      console.error('Error loading achievements:', error);
+      console.log('AchievementsPanel: Data received from API:', data);
+      
+      // Проверяем структуру данных
+      if (data && typeof data === 'object') {
+        // Убеждаемся, что achievements существует
+        if (!data.achievements) {
+          data.achievements = {};
+        }
+        
+        // Логируем разблокированные достижения
+        const unlocked = Object.entries(data.achievements || {})
+          .filter(([_, a]: [string, any]) => a && a.isUnlocked === true)
+          .map(([id, _]) => id);
+        
+        console.log('AchievementsPanel: Unlocked achievements:', unlocked);
+        console.log('AchievementsPanel: All achievements data:', Object.keys(data.achievements || {}));
+        
+        setAchievementData(data);
+      } else {
+        console.warn('AchievementsPanel: Invalid data format:', data);
+        setAchievementData({
+          userId,
+          achievements: {},
+          lastUpdated: new Date().toISOString(),
+        });
+      }
+    } catch (error: any) {
+      console.error('AchievementsPanel: Error loading achievements:', error);
+      // Устанавливаем пустые данные при ошибке
+      setAchievementData({
+        userId,
+        achievements: {},
+        lastUpdated: new Date().toISOString(),
+      });
     } finally {
       setLoading(false);
     }
   };
 
   const getUserAchievement = (achievementId: string): UserAchievement => {
-    return achievementData?.achievements[achievementId] || {
+    const userAchievement = achievementData?.achievements?.[achievementId];
+    if (userAchievement) {
+      return userAchievement;
+    }
+    // Если достижение не найдено, возвращаем дефолтное значение
+    return {
       achievementId,
       progress: 0,
       isUnlocked: false,
     };
   };
 
+  // Фильтруем достижения по категории (показываем все, но выделяем полученные)
   const filteredAchievements = ACHIEVEMENTS.filter(achievement => {
     if (selectedCategory === 'all') return true;
     return achievement.category === selectedCategory;
@@ -70,11 +121,29 @@ export function AchievementsPanel({ userId }: AchievementsPanelProps) {
 
   const stats = {
     total: ACHIEVEMENTS.length,
-    unlocked: Object.values(achievementData?.achievements || {}).filter(a => a.isUnlocked).length,
+    unlocked: Object.values(achievementData?.achievements || {}).filter((a: any) => a && a.isUnlocked === true).length,
     inProgress: Object.values(achievementData?.achievements || {}).filter(
-      a => !a.isUnlocked && a.progress > 0
+      (a: any) => a && a.isUnlocked !== true && a.progress > 0
     ).length,
   };
+  
+  // Логируем для отладки
+  if (achievementData) {
+    const unlockedList = Object.entries(achievementData.achievements || {})
+      .filter(([_, a]: [string, any]) => a && a.isUnlocked === true)
+      .map(([id, _]) => id);
+    
+    console.log('AchievementsPanel: Data loaded', {
+      userId,
+      totalAchievements: Object.keys(achievementData.achievements || {}).length,
+      unlocked: stats.unlocked,
+      inProgress: stats.inProgress,
+      unlockedIds: unlockedList,
+      allAchievements: Object.keys(achievementData.achievements || {})
+    });
+  } else {
+    console.log('AchievementsPanel: No achievement data yet');
+  }
 
   const categories: Array<AchievementCategory | 'all'> = [
     'all',
@@ -135,22 +204,31 @@ export function AchievementsPanel({ userId }: AchievementsPanelProps) {
           const userAchievement = getUserAchievement(achievement.id);
           const progress = getAchievementProgress(achievement, userAchievement);
           const isLocked = !userAchievement.isUnlocked && achievement.isSecret;
+          
+          // Логируем для отладки разблокированных достижений
+          if (userAchievement.isUnlocked === true) {
+            console.log(`✅ Achievement unlocked: ${achievement.id} (${achievement.name})`, {
+              userAchievement,
+              unlockedAt: userAchievement.unlockedAt
+            });
+          }
 
           return (
             <div
               key={achievement.id}
               className="relative rounded-lg border overflow-hidden transition-all hover:scale-[1.02]"
               style={{
-                borderColor: userAchievement.isUnlocked
+                borderColor: userAchievement.isUnlocked === true
                   ? RARITY_COLORS[achievement.rarity]
                   : 'rgba(255,255,255,0.1)',
-                backgroundColor: userAchievement.isUnlocked
+                backgroundColor: userAchievement.isUnlocked === true
                   ? `${RARITY_COLORS[achievement.rarity]}10`
                   : 'rgba(255,255,255,0.02)',
+                borderWidth: userAchievement.isUnlocked === true ? '2px' : '1px',
               }}
             >
               {/* Прогресс бар */}
-              {!userAchievement.isUnlocked && !isLocked && (
+              {userAchievement.isUnlocked !== true && !isLocked && (
                 <div
                   className="absolute bottom-0 left-0 h-1 transition-all"
                   style={{
@@ -165,8 +243,11 @@ export function AchievementsPanel({ userId }: AchievementsPanelProps) {
                   {/* Иконка */}
                   <div
                     className={`flex-shrink-0 text-4xl transition-all ${
-                      userAchievement.isUnlocked ? '' : 'grayscale opacity-50'
+                      userAchievement.isUnlocked === true ? '' : 'grayscale opacity-50'
                     }`}
+                    style={{
+                      filter: userAchievement.isUnlocked === true ? 'none' : 'grayscale(100%)',
+                    }}
                   >
                     {isLocked ? <Lock className="w-10 h-10" /> : achievement.icon}
                   </div>
@@ -174,10 +255,12 @@ export function AchievementsPanel({ userId }: AchievementsPanelProps) {
                   {/* Информация */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <div className="text-lg">
+                      <div className="text-lg font-semibold">
                         {isLocked ? '???' : achievement.name}
                       </div>
-                      {userAchievement.isUnlocked && <Award className="w-5 h-5 text-yellow-500" />}
+                      {userAchievement.isUnlocked === true && (
+                        <Award className="w-5 h-5 text-yellow-500 flex-shrink-0" />
+                      )}
                     </div>
                     
                     <div className="text-sm opacity-70 mb-2">
@@ -202,7 +285,7 @@ export function AchievementsPanel({ userId }: AchievementsPanelProps) {
                       </div>
 
                       {/* Прогресс */}
-                      {!userAchievement.isUnlocked && !isLocked && (
+                      {userAchievement.isUnlocked !== true && !isLocked && (
                         <div className="flex items-center gap-2 text-sm">
                           <TrendingUp className="w-4 h-4" />
                           <span>
@@ -212,7 +295,7 @@ export function AchievementsPanel({ userId }: AchievementsPanelProps) {
                       )}
 
                       {/* Дата разблокировки */}
-                      {userAchievement.isUnlocked && userAchievement.unlockedAt && (
+                      {userAchievement.isUnlocked === true && userAchievement.unlockedAt && (
                         <div className="text-xs opacity-60">
                           Разблокировано:{' '}
                           {new Date(userAchievement.unlockedAt).toLocaleDateString('ru-RU')}
@@ -225,12 +308,6 @@ export function AchievementsPanel({ userId }: AchievementsPanelProps) {
             </div>
           );
         })}
-
-        {filteredAchievements.length === 0 && (
-          <div className="text-center py-12 opacity-50">
-            В этой категории пока нет достижений
-          </div>
-        )}
       </div>
     </div>
   );

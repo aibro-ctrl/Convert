@@ -11,6 +11,7 @@ export interface DirectMessage {
     sender_id: string;
     sender_username: string;
     created_at: string;
+    type?: string; // Тип сообщения для правильного отображения в превью
   };
   last_activity?: string;
   unread_count?: Record<string, number>; // userId -> count непрочитанных
@@ -236,7 +237,8 @@ export async function sendDMMessage(
       content: content.substring(0, 100),
       sender_id: userId,
       sender_username: user.display_name || user.username,
-      created_at: message.created_at
+      created_at: message.created_at,
+      type: message.type // Добавляем тип сообщения для правильного отображения в превью
     };
 
     // Обновляем счетчик непрочитанных для собеседника

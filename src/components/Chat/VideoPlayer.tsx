@@ -1,13 +1,16 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { Dialog, DialogContent } from '../ui/dialog';
 import { Play, Pause, Volume2, VolumeX } from '../ui/icons';
 import { Button } from '../ui/button';
+import { fixMediaUrl } from '../../utils/urlFix';
 
 interface VideoPlayerProps {
   src: string;
 }
 
 export function VideoPlayer({ src }: VideoPlayerProps) {
+  // Исправляем URL перед использованием
+  const fixedSrc = useMemo(() => fixMediaUrl(src), [src]);
   const [showFullscreen, setShowFullscreen] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -47,7 +50,7 @@ export function VideoPlayer({ src }: VideoPlayerProps) {
       <div className="relative w-64 h-64 group">
         <video
           ref={videoRef}
-          src={src}
+          src={fixedSrc}
           loop
           muted={isMuted}
           autoPlay={false}
@@ -55,6 +58,9 @@ export function VideoPlayer({ src }: VideoPlayerProps) {
           onClick={handleVideoClick}
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
+          onError={(e) => {
+            console.error('Video playback error:', e, 'URL:', fixedSrc);
+          }}
         />
         
         {/* Круговая обводка с прогрессом воспроизведения */}
@@ -93,12 +99,15 @@ export function VideoPlayer({ src }: VideoPlayerProps) {
           <div className="relative">
             <video
               ref={fullscreenVideoRef}
-              src={src}
+              src={fixedSrc}
               loop
               muted={isMuted}
               autoPlay
               controls
               className="w-full rounded-lg"
+              onError={(e) => {
+                console.error('Fullscreen video playback error:', e, 'URL:', fixedSrc);
+              }}
             />
           </div>
         </DialogContent>

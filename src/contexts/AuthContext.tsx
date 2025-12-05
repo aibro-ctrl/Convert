@@ -14,7 +14,7 @@ interface AuthContextType {
   updateLastActivity: () => void;
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -25,9 +25,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
 
   useEffect(() => {
-    checkAuth();
+    // Не проверяем auth сразу при монтировании - даем время для сохранения токена после входа
+    const timeoutId = setTimeout(() => {
+      checkAuth();
+    }, 100);
     
-    // Автопереподключение каждые 30 секунд если есть токен
+    // Автопереподключение каждые 60 секунд если есть токен (увеличили интервал)
     const reconnectInterval = setInterval(() => {
       const token = localStorage.getItem('access_token');
       if (token && !user) {
@@ -35,77 +38,90 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         checkAuth();
         setReconnectAttempts(prev => prev + 1);
       }
-    }, 30000);
+    }, 60000); // Увеличили с 30 до 60 секунд
     
-    return () => clearInterval(reconnectInterval);
+    return () => {
+      clearTimeout(timeoutId);
+      clearInterval(reconnectInterval);
+    };
   }, [user]);
 
   const checkAuth = async () => {
     try {
-      console.log('AuthContext: checkAuth started');
       const token = localStorage.getItem('access_token');
-      console.log('AuthContext: Token in localStorage:', token ? token.substring(0, 20) + '...' : 'null');
       
       // Pre-check: validate token format and expiry
+      // Используем большой buffer (10 минут) - не выкидываем пользователя слишком рано
       if (token) {
-        // Use the centralized token validation
-        if (isTokenExpired(token, 0)) {
-          console.log('AuthContext: Token is expired - clearing immediately');
-          clearStoragePreservingSettings();
-          setUser(null);
-          setLoading(false);
-          return;
-        }
-        
-        // Log token info for debugging
-        try {
-          const payload = JSON.parse(atob(token.split('.')[1]));
-          if (payload.exp) {
-            const expDate = new Date(payload.exp * 1000);
-            const now = new Date();
-            const minutesUntilExpiry = Math.floor((expDate.getTime() - now.getTime()) / 1000 / 60);
-            console.log(`AuthContext: Token is valid, expires in ${minutesUntilExpiry} minutes (at ${expDate.toISOString()})`);
-          }
-        } catch (e) {
-          console.error('AuthContext: Error parsing token for logging:', e);
+        // Проверяем только критически истекшие токены (более 10 минут)
+        if (isTokenExpired(token, 600)) {
+          // Пробуем обновить токен вместо выкидывания
+          const refreshed = await refreshAuthToken();
+          // НЕ очищаем токен даже если не удалось обновить - пользователь остается в приложении
         }
       }
       
       if (token && token.length > 20) { // Check token is not empty or too short
-        console.log('AuthContext: Fetching user with token');
         try {
           const data = await authAPI.getMe();
-          console.log('AuthContext: User data received:', data.user);
           setUser(data.user);
         } catch (error: any) {
-          console.error('AuthContext: Token validation failed:', error.message);
-          
           // Check if it's a network error
-          if (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError')) {
-            console.log('AuthContext: Network error - keeping token for retry');
-            // Don't clear token on network errors, just set user to null
+          if (error.message?.includes('Failed to fetch') || 
+              error.message?.includes('NetworkError') ||
+              error.message?.includes('Network error') ||
+              error.message?.includes('timeout')) {
+            // Не очищаем токен при сетевых ошибках - пользователь остается в системе
+            // Попробуем обновить токен
+            const refreshed = await refreshAuthToken();
+            if (refreshed) {
+              // Если токен обновлен, попробуем еще раз получить пользователя
+              try {
+                const retryData = await authAPI.getMe();
+                setUser(retryData.user);
+                setLoading(false);
+                return;
+              } catch (retryError) {
+                // Тихая ошибка - не логируем
+              }
+            }
+            // Оставляем пользователя в системе даже при ошибках
             setUser(null);
           } else if (error.message?.includes('invalid claim') || 
               error.message?.includes('Invalid token') || 
               error.message?.includes('missing sub') ||
               error.message?.includes('expired') ||
               error.message?.includes('Недействительный токен')) {
-            console.log('AuthContext: Invalid token detected - clearing localStorage');
-            clearStoragePreservingSettings();
+            // Пробуем обновить токен вместо выкидывания
+            const refreshed = await refreshAuthToken();
+            if (refreshed) {
+              try {
+                const retryData = await authAPI.getMe();
+                setUser(retryData.user);
+                setLoading(false);
+                return;
+              } catch (retryError) {
+                // Тихая ошибка
+              }
+            }
+            // НЕ очищаем токен - пользователь остается в приложении
             setUser(null);
           } else {
-            // For other errors, just remove the token
-            console.log('AuthContext: Unknown error - removing token');
-            localStorage.removeItem('access_token');
+            // For other errors, не удаляем токен - пользователь остается в системе
             setUser(null);
           }
         }
       } else {
         console.log('AuthContext: No valid token found, user will be null');
         if (token) {
-          // Remove invalid token
-          console.log('AuthContext: Removing invalid short token');
-          localStorage.removeItem('access_token');
+          // Проверяем длину токена перед удалением
+          if (token.length < 20) {
+            console.log('AuthContext: Removing invalid short token (length:', token.length, ')');
+            localStorage.removeItem('access_token');
+          } else {
+            console.log('AuthContext: Token exists but getMe failed, keeping token for retry (length:', token.length, ')');
+            // НЕ удаляем токен - возможно это временная ошибка сети
+          }
         }
       }
     } catch (error: any) {
@@ -123,23 +139,77 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       console.log('AuthContext: Calling signin API');
       const data = await authAPI.signin(email, password);
-      console.log('AuthContext: Signin response:', data);
+      console.log('AuthContext: Signin response:', {
+        hasAccessToken: !!data.access_token,
+        hasRefreshToken: !!data.refresh_token,
+        hasUser: !!data.user,
+        tokenLength: data.access_token?.length || 0
+      });
       
       if (!data.access_token) {
+        console.error('AuthContext: No access_token in response:', data);
         throw new Error('Не получен токен доступа');
       }
       
+      // Сохраняем токены
+      console.log('AuthContext: Saving tokens to localStorage');
       localStorage.setItem('access_token', data.access_token);
+      console.log('AuthContext: access_token saved, length:', data.access_token.length);
+      
       if (data.refresh_token) {
         localStorage.setItem('refresh_token', data.refresh_token);
+        console.log('AuthContext: refresh_token saved');
       }
-      setUser(data.user);
+      
+      // Проверяем, что токен действительно сохранен
+      const savedToken = localStorage.getItem('access_token');
+      if (!savedToken || savedToken !== data.access_token) {
+        console.error('AuthContext: Token was not saved correctly!', {
+          expected: data.access_token.substring(0, 20) + '...',
+          got: savedToken ? savedToken.substring(0, 20) + '...' : 'null'
+        });
+        throw new Error('Ошибка сохранения токена');
+      }
+      
+      console.log('AuthContext: Token verified in localStorage');
+      
+      // Устанавливаем пользователя ПЕРЕД инициализацией E2EE
+      if (data.user) {
+        setUser(data.user);
+        console.log('AuthContext: User set:', data.user.username);
+      } else {
+        console.warn('AuthContext: No user data in response, trying to get user from /auth/me');
+        // Если нет user в ответе, пробуем получить его через /auth/me
+        try {
+          const meData = await authAPI.getMe();
+          if (meData.user) {
+            setUser(meData.user);
+            console.log('AuthContext: User retrieved from /auth/me:', meData.user.username);
+          }
+        } catch (meError) {
+          console.error('AuthContext: Failed to get user from /auth/me:', meError);
+        }
+      }
       
       // Инициализация E2EE ключей после успешного входа
       // CryptoContext инициализирует ключи автоматически через useEffect при появлении user
       // Используем пароль для расшифровки приватного ключа
       localStorage.setItem('temp_password', password);
       setTimeout(() => localStorage.removeItem('temp_password'), 5000); // Удаляем через 5 сек
+      
+      console.log('AuthContext: Signin completed successfully');
+      
+      // Проверяем финальное состояние через небольшую задержку
+      setTimeout(() => {
+        const finalToken = localStorage.getItem('access_token');
+        const currentUser = data.user;
+        console.log('AuthContext: Final state after signin (delayed check):', {
+          hasToken: !!finalToken,
+          tokenLength: finalToken?.length || 0,
+          hasUser: !!currentUser,
+          username: currentUser?.username || 'none'
+        });
+      }, 500);
     } catch (error) {
       console.error('AuthContext: Signin error:', error);
       throw error;
@@ -148,12 +218,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signup = async (email: string, password: string, username: string) => {
     try {
-      console.log('AuthContext: Calling signup API');
+      console.log('AuthContext: Calling signup API', { email, username });
       const data = await authAPI.signup(email, password, username);
       console.log('AuthContext: Signup response:', data);
       
-      if (!data.access_token) {
-        throw new Error('Не получен токен доступа');
+      if (!data || !data.access_token) {
+        const errorMsg = data?.error || 'Не получен токен доступа';
+        console.error('AuthContext: Signup failed - no token:', errorMsg);
+        throw new Error(errorMsg);
       }
       
       localStorage.setItem('access_token', data.access_token);
@@ -166,9 +238,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Сохраняем пароль временно для генерации ключей
       localStorage.setItem('temp_password', password);
       setTimeout(() => localStorage.removeItem('temp_password'), 5000);
-    } catch (error) {
+    } catch (error: any) {
       console.error('AuthContext: Signup error:', error);
-      throw error;
+      // Пробрасываем ошибку дальше с понятным сообщением
+      const errorMessage = error?.message || error?.error || 'Ошибка регистрации';
+      throw new Error(errorMessage);
     }
   };
 
@@ -181,6 +255,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     // Clear all localStorage data while preserving theme
     clearStoragePreservingSettings();
+    // Очищаем сессионный ключ шифрования (удаляется из sessionStorage)
+    // Это произойдет автоматически при перезагрузке страницы, но можно очистить явно
+    sessionStorage.removeItem('session_encryption_key');
     setGodModeEnabled(false);
     setUser(null);
     // Force page reload to ensure complete logout
@@ -249,28 +326,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Обновляем последнюю активность каждую минуту
+  // Обновляем последнюю активность каждые 2 минуты (увеличили интервал)
   useEffect(() => {
     if (!user) return;
     
     updateLastActivity(); // Сразу при монтировании
     
-    const interval = setInterval(updateLastActivity, 60000); // Каждую минуту
+    const interval = setInterval(updateLastActivity, 120000); // Каждые 2 минуты
     
-    // Отслеживаем активность пользователя
+    // Отслеживаем активность пользователя с debounce (только раз в 30 секунд)
+    let activityTimeout: NodeJS.Timeout;
     const handleActivity = () => {
-      updateLastActivity();
+      clearTimeout(activityTimeout);
+      activityTimeout = setTimeout(() => {
+        updateLastActivity();
+      }, 30000); // Debounce 30 секунд
     };
     
-    window.addEventListener('click', handleActivity);
-    window.addEventListener('keydown', handleActivity);
-    window.addEventListener('scroll', handleActivity);
+    window.addEventListener('click', handleActivity, { passive: true });
+    window.addEventListener('keydown', handleActivity, { passive: true });
     
     return () => {
       clearInterval(interval);
+      clearTimeout(activityTimeout);
       window.removeEventListener('click', handleActivity);
       window.removeEventListener('keydown', handleActivity);
-      window.removeEventListener('scroll', handleActivity);
     };
   }, [user]);
 

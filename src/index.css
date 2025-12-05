@@ -3880,7 +3880,60 @@ html {
   syntax: "*";
   inherits: false
 }
+}
 
+@layer utilities {
+  @keyframes message-fade-in {
+    0% {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-message-in {
+    animation: message-fade-in 0.22s var(--ease-in-out);
+  }
+
+  @keyframes reaction-pop {
+    0% {
+      transform: scale(0.8);
+    }
+    60% {
+      transform: scale(1.15);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  .animate-reaction-pop {
+    animation: reaction-pop 0.18s ease-out;
+  }
+
+  /* Анимация для «больших» эмодзи-сообщений */
+  .animate-emoji-pop {
+    animation: reaction-pop 0.22s ease-out;
+  }
+
+  @keyframes context-menu-pop {
+    0% {
+      opacity: 0;
+      transform: translateY(4px) scale(0.96);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .animate-context-menu-pop {
+    animation: context-menu-pop 0.18s var(--ease-in-out);
+    transform-origin: bottom center;
+  }
 @keyframes spin {
   to {
     transform: rotate(360deg);

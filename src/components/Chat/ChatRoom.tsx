@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Room, Message, messagesAPI, roomsAPI, User, usersAPI } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
-import { useCrypto } from '../../contexts/CryptoContext';
+import { useSessionCrypto } from '../../contexts/SessionCryptoContext';
 import { useAchievements } from '../../contexts/AchievementsContext';
-import { encryptMessageContent } from '../../utils/messageEncryption';
+import { encryptMessageContent, decryptMessageContent } from '../../utils/messageEncryption';
 import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { MembersModal } from './MembersModal';
@@ -26,7 +26,7 @@ interface ChatRoomProps {
 export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFriends }: ChatRoomProps) {
   const { user, godModeEnabled } = useAuth();
   const { tracker } = useAchievements();
-  const { cryptoKey } = useCrypto();
+  const sessionCrypto = useSessionCrypto();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
@@ -62,10 +62,11 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
       }
     }
     
+    // Real-time обновление сообщений - как в Telegram (3 секунды)
     const interval = setInterval(() => {
       loadMessages();
       updateUnreadCounts();
-    }, 5000); // Обновление каждые 5 секунд (оптимизация производительности)
+    }, 3000); // Real-time: обновление каждые 3 секунды
     return () => clearInterval(interval);
   }, [room.id]);
 
@@ -179,9 +180,14 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
 
   const handleSendMessage = async (content: string, type: Message['type'], replyTo?: string) => {
     try {
-      // Шифруем содержимое сообщения, если это необходимо
-      const encryptedContent = type === 'text' && cryptoKey ? await encryptMessageContent(content, cryptoKey) : content;
+      // Шифрование (не блокируем отправку, если не готово - используется базовое шифрование)
+      let encryptedContent: string;
+
+      // Шифруем сообщение перед отправкой в базу
+      encryptedContent = await encryptMessageContent(content, sessionCrypto);
+      console.log('SessionCrypto: Message encrypted for database');
       
+      // Отправляем ТОЛЬКО зашифрованное сообщение
       await messagesAPI.send(room.id, encryptedContent, type, replyTo);
       setReplyingTo(null);
       
@@ -374,19 +380,85 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
     }
   };
 
-  // Отметить все как прочитанное при входе (кроме режима Глаз Бога)
+  // Отметить все как прочитанное при входе и прокрутить к последнему непрочитанному сообщению
   useEffect(() => {
     const markAsReadOnEnter = async () => {
       if (user && !room.isGodMode) {
+        // Находим последнее непрочитанное сообщение
+        const lastReadTime = room.last_read?.[user.id] ? new Date(room.last_read[user.id]).getTime() : 0;
+        const unreadMessages = messages.filter(m => 
+          new Date(m.created_at).getTime() > lastReadTime && m.sender_id !== user.id
+        );
+        
+        if (unreadMessages.length > 0) {
+          // Прокручиваем к последнему непрочитанному сообщению
+          const lastUnreadMessage = unreadMessages[unreadMessages.length - 1];
+          setTimeout(() => {
+            const messageElement = document.getElementById(`message-${lastUnreadMessage.id}`);
+            if (messageElement) {
+              messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            } else {
+              // Если элемент еще не загружен, прокручиваем вниз
+              scrollToBottom();
+            }
+          }, 300);
+        } else {
+          // Если нет непрочитанных, прокручиваем вниз
+          setTimeout(() => scrollToBottom(), 300);
+        }
+        
         await roomsAPI.markAsRead(room.id, false, false);
+      } else {
+        // В режиме Глаз Бога просто прокручиваем вниз
+        setTimeout(() => scrollToBottom(), 300);
       }
     };
-    markAsReadOnEnter();
-  }, [room.id, room.isGodMode, user]);
+    
+    // Выполняем только после загрузки сообщений
+    if (!loading && messages.length > 0) {
+      markAsReadOnEnter();
+    }
+  }, [room.id, room.isGodMode, user, messages.length, loading]);
 
   const pinnedMessage = currentRoom.pinned_message_id
     ? messages.find(m => m.id === currentRoom.pinned_message_id)
     : null;
+  
+  const [pinnedMessageDecrypted, setPinnedMessageDecrypted] = useState<string | null>(null);
+  
+  // Расшифровка закрепленного сообщения
+  useEffect(() => {
+    const decryptPinned = async () => {
+      if (!pinnedMessage) {
+        setPinnedMessageDecrypted(null);
+        return;
+      }
+      
+      if (sessionCrypto && sessionCrypto.isReady) {
+        try {
+          const decrypted = await decryptMessageContent(pinnedMessage.content, sessionCrypto, pinnedMessage);
+          setPinnedMessageDecrypted(decrypted);
+        } catch (error) {
+          console.error('SessionCrypto: Failed to decrypt pinned message:', error);
+          setPinnedMessageDecrypted('[🔒 Не удалось расшифровать]');
+        }
+      } else {
+        // Проверяем, зашифровано ли сообщение
+        try {
+          const parsed = JSON.parse(pinnedMessage.content);
+          if (parsed && parsed.version && parsed.ciphertext) {
+            setPinnedMessageDecrypted('[🔒 Зашифровано - ожидание ключей...]');
+          } else {
+            setPinnedMessageDecrypted(pinnedMessage.content);
+          }
+        } catch {
+          setPinnedMessageDecrypted(pinnedMessage.content);
+        }
+      }
+    };
+    
+    decryptPinned();
+  }, [pinnedMessage, sessionCrypto]);
 
   const isMuted = user?.muted;
   const isBanned = user?.banned;
@@ -401,9 +473,9 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
   }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col bg-gradient-to-br from-background via-background/95 to-background/90">
       {/* Header - Sticky */}
-      <div className="sticky top-0 z-30 border-b p-4 pt-6 flex items-center justify-between bg-background">
+      <div className="sticky top-0 z-30 border-b px-4 py-4 flex items-center justify-between bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 shadow-sm transition-colors">
         <div className="flex items-center gap-3">
           <Button 
             variant="ghost" 
@@ -412,15 +484,15 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
             disabled={isAzkaban && isBanned}
             title={isAzkaban && isBanned ? 'Вы не можете покинуть Азкабан, пока забанены' : 'Назад'}
           >
-            <ArrowLeft className="w-5 h-5" />
+            <ArrowLeft className="w-5 h-5 transition-transform duration-200 hover:-translate-x-0.5" />
           </Button>
           <div>
-            <h2 className="flex items-center gap-2">
+            <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
               {room.type === 'dm' && dmOtherUser 
                 ? ((dmOtherUser as any).display_name || dmOtherUser.username)
                 : room.name}
               {room.isGodMode && (
-                <Badge variant="secondary" className="text-xs">Режим наблюдения</Badge>
+                <Badge variant="secondary" className="text-xs animate-pulse">Режим наблюдения</Badge>
               )}
             </h2>
             {room.type === 'dm' ? (
@@ -569,7 +641,50 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
             <div className="flex-1 min-w-0">
               <p className="text-sm truncate">
                 <span className="text-muted-foreground">{pinnedMessage.sender_display_name || pinnedMessage.sender_username}: </span>
-                {pinnedMessage.content}
+                {(() => {
+                  const messageType = pinnedMessage.type;
+                  
+                  // Проверка типа сообщения (приоритет)
+                  if (messageType === 'video') {
+                    return '🎥 Видео';
+                  }
+                  if (messageType === 'voice' || messageType === 'audio') {
+                    return '🎤 Голосовое';
+                  }
+                  
+                  // Используем расшифрованное содержимое
+                  const content = pinnedMessageDecrypted || pinnedMessage.content;
+                  
+                  // Проверка на markdown изображение
+                  if (content && content.startsWith('![') && content.includes('](')) {
+                    return '🖼️ Изображение';
+                  }
+                  
+                  // Проверка на URL медиа (любой хост)
+                  if (content && (content.startsWith('http://') || content.startsWith('https://'))) {
+                    // Проверяем по пути в URL
+                    if (content.includes('/voice/') || content.includes('/audio/') || content.includes('voice') || content.includes('audio')) {
+                      return '🎤 Голосовое';
+                    }
+                    if (content.includes('/video/') || content.includes('video')) {
+                      return '🎥 Видео';
+                    }
+                    if (content.includes('/images/') || content.includes('/image/') || content.includes('images') || content.includes('image')) {
+                      return '🖼️ Изображение';
+                    }
+                    // Если это просто URL без явного типа, показываем как файл
+                    if (content.includes('/storage/v1/object/')) {
+                      return '📎 Файл';
+                    }
+                  }
+                  
+                  // Обычный текст (расшифрованный)
+                  if (content) {
+                    return content.length > 50 ? content.substring(0, 50) + '...' : content;
+                  }
+                  
+                  return '[🔒 Зашифровано]';
+                })()}
               </p>
             </div>
           </div>
@@ -583,18 +698,22 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
 
       {/* Search Bar - Sticky */}
       {showSearch && (
-        <div className="sticky top-[73px] z-20 border-b p-3 bg-muted/50">
+        <div className="sticky top-[73px] z-20 border-b px-4 py-3 bg-muted/60 backdrop-blur-md">
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Поиск по сообщениям..."
+            className="bg-background/80 border-border/60 focus-visible:ring-primary/60 transition-colors"
           />
         </div>
       )}
 
       {/* Messages Container with scroll button */}
       <div className="flex-1 relative">
-        <div ref={messagesContainerRef} className="absolute inset-0 overflow-y-auto p-4">
+        <div
+          ref={messagesContainerRef}
+          className="absolute inset-0 overflow-y-auto p-4 space-y-1 lg:space-y-1.5 bg-gradient-to-b from-background/40 via-background/70 to-background/95"
+        >
           {loading ? (
             <div className="flex items-center justify-center h-full">
               Загрузка сообщений...
@@ -619,17 +738,22 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
                     : null;
                   
                   return (
-                    <MessageBubble
+                    <div
                       key={message.id}
-                      message={message}
-                      onReply={setReplyingTo}
-                      onPin={handlePinMessage}
-                      onDelete={handleDeleteMessage}
-                      onUserClick={handleUserClick}
-                      isPinned={message.id === currentRoom.pinned_message_id}
-                      replyToMessage={replyToMsg}
-                      onEdit={loadMessages}
-                    />
+                      id={`message-${message.id}`}
+                      className="animate-message-in transition-transform duration-200 ease-out hover:-translate-y-0.5"
+                    >
+                      <MessageBubble
+                        message={message}
+                        onReply={setReplyingTo}
+                        onPin={handlePinMessage}
+                        onDelete={handleDeleteMessage}
+                        onUserClick={handleUserClick}
+                        isPinned={message.id === currentRoom.pinned_message_id}
+                        replyToMessage={replyToMsg}
+                        onEdit={loadMessages}
+                      />
+                    </div>
                   );
                 })}
               <div ref={messagesEndRef} />
@@ -678,8 +802,8 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
             <Button
               onClick={scrollToBottom}
               size="icon"
-              className="rounded-full shadow-lg hover:shadow-xl transition-shadow"
-              variant="secondary"
+              className="rounded-full shadow-lg hover:shadow-xl transition-shadow bg-primary text-primary-foreground z-30"
+              variant="default"
             >
               <ArrowDown className="w-5 h-5" />
             </Button>

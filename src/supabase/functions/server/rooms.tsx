@@ -8,7 +8,8 @@ export interface Room {
   created_by: string;
   created_at: string;
   members: string[]; // user IDs
-  pinned_message_id?: string;
+  pinned_message_id?: string; // Текущее закрепленное сообщение (для обратной совместимости)
+  pinned_message_ids?: string[]; // История всех закрепленных сообщений
   dm_participants?: string[]; // Для DM комнат - ID двух участников
   unread_mentions?: Record<string, number>; // userId -> count
   unread_reactions?: Record<string, number>; // userId -> count
@@ -19,10 +20,12 @@ export interface Room {
     content: string;
     sender_username: string;
     created_at: string;
+    type?: string; // Тип сообщения для правильного отображения в превью
   };
   deleted?: boolean; // Флаг мягкого удаления
   deleted_at?: string; // Дата удаления
   deleted_by?: string; // Кто удалил
+  is_favorites?: boolean; // Флаг комнаты "Избранное" - доступна только владельцу
 }
 
 export async function createRoom(
@@ -92,9 +95,9 @@ export async function getRooms(userId: string, godModeEnabled: boolean = false) 
     // Режим "Глаз Бога" - только первый пользователь iBro может включить
     if (user?.username === 'iBro' && godModeEnabled) {
       console.log('God Mode enabled for iBro - showing all rooms except favorites');
-      // Исключаем комнаты "Избранное" из режима Глаз Бога
+      // Исключаем комнаты "Избранное" из режима Глаз Бога (по имени и флагу)
       const filteredGodModeRooms = activeRooms.filter((room: Room) => 
-        !room.name.includes('⭐ Избранное') && !room.name.includes('Избранное')
+        !room.is_favorites && !room.name.includes('⭐ Избранное') && !room.name.includes('Избранное')
       );
       return filteredGodModeRooms.map((room: Room) => ({
         ...room,
@@ -214,6 +217,11 @@ export async function inviteToRoom(roomId: string, invitedUserId: string, invite
       return { error: 'Комната не найдена' };
     }
 
+    // Нельзя приглашать в комнату "Избранное"
+    if (room.is_favorites) {
+      return { error: 'Нельзя добавить пользователей в комнату "Избранное"' };
+    }
+
     // Нельзя приглашать в удаленную комнату
     if (room.deleted) {
       return { error: 'Комната удалена' };
@@ -266,6 +274,21 @@ export async function pinMessage(roomId: string, messageId: string, userId: stri
       return { error: 'Сообщение не найдено или удалено' };
     }
 
+    // Инициализируем массив истории закрепленных, если его нет
+    if (!room.pinned_message_ids) {
+      room.pinned_message_ids = [];
+      // Если есть старое закрепленное сообщение, добавляем его в историю
+      if (room.pinned_message_id && !room.pinned_message_ids.includes(room.pinned_message_id)) {
+        room.pinned_message_ids.push(room.pinned_message_id);
+      }
+    }
+
+    // Добавляем новое сообщение в историю, если его там еще нет
+    if (!room.pinned_message_ids.includes(messageId)) {
+      room.pinned_message_ids.push(messageId);
+    }
+
+    // Устанавливаем текущее закрепленное сообщение
     room.pinned_message_id = messageId;
     await kv.set(`room:${roomId}`, room);
 
@@ -275,12 +298,12 @@ export async function pinMessage(roomId: string, messageId: string, userId: stri
   }
 }
 
-export async function unpinMessage(roomId: string, userId: string) {
+export async function unpinMessage(roomId: string, messageId: string, userId: string) {
   try {
     const user = await kv.get(`user:${userId}`) as User;
     
     if (!['admin', 'moderator', 'vip'].includes(user?.role)) {
-      return { error: 'Недостаточно прав' };
+      return { error: 'Недостаточно прав для открепления' };
     }
 
     const room = await kv.get(`room:${roomId}`) as Room;
@@ -288,7 +311,28 @@ export async function unpinMessage(roomId: string, userId: string) {
       return { error: 'Комната не найдена' };
     }
 
-    delete room.pinned_message_id;
+    // Нельзя откреплять сообщения в удаленной комнате
+    if (room.deleted) {
+      return { error: 'Комната удалена' };
+    }
+
+    // Удаляем из истории закрепленных сообщений
+    if (room.pinned_message_ids && room.pinned_message_ids.includes(messageId)) {
+      room.pinned_message_ids = room.pinned_message_ids.filter(id => id !== messageId);
+    }
+
+    // Если это текущее закрепленное сообщение, удаляем его
+    if (room.pinned_message_id === messageId) {
+      // Устанавливаем следующее из истории, если есть
+      if (room.pinned_message_ids && room.pinned_message_ids.length > 0) {
+        room.pinned_message_id = room.pinned_message_ids[room.pinned_message_ids.length - 1];
+        // Удаляем его из истории, так как оно теперь текущее
+        room.pinned_message_ids = room.pinned_message_ids.slice(0, -1);
+      } else {
+        delete room.pinned_message_id;
+      }
+    }
+
     await kv.set(`room:${roomId}`, room);
 
     return { data: room };
@@ -356,9 +400,14 @@ export async function getOrCreateDM(userId1: string, userId2: string) {
 export async function deleteRoom(roomId: string, userId: string) {
   try {
     const user = await kv.get(`user:${userId}`) as User;
+    if (!user) {
+      return { error: 'Пользователь не найден' };
+    }
+
     const room = await kv.get(`room:${roomId}`) as Room;
     
     if (!room) {
+      console.error(`Room ${roomId} not found for deletion by user ${userId}`);
       return { error: 'Комната не найдена' };
     }
 
@@ -366,10 +415,54 @@ export async function deleteRoom(roomId: string, userId: string) {
       return { error: 'Комната уже удалена' };
     }
 
-    // Может удалять: создатель комнаты, модератор или админ
-    if (room.created_by !== userId && !['admin', 'moderator'].includes(user?.role)) {
-      return { error: 'Недостаточно прав для удаления комнаты' };
+    // Для DM комнат: любой участник может удалить
+    if (room.type === 'dm') {
+      // Проверяем оба поля: members и dm_participants
+      const isParticipant = 
+        (room.members && room.members.includes(userId)) ||
+        (room.dm_participants && room.dm_participants.includes(userId));
+      
+      if (!isParticipant) {
+        console.error(`User ${userId} is not a participant of DM room ${roomId}. Members: ${room.members?.join(', ')}, DM participants: ${room.dm_participants?.join(', ')}`);
+        return { error: 'Вы не являетесь участником этого чата' };
+      }
+      console.log(`User ${userId} deleting DM room ${roomId} (members: ${room.members?.join(', ')}, dm_participants: ${room.dm_participants?.join(', ')})`);
+    } else {
+      // Для обычных комнат: может удалять создатель, модератор или админ
+      const canDelete = 
+        room.created_by === userId || 
+        user?.role === 'admin' || 
+        user?.role === 'moderator';
+      
+      if (!canDelete) {
+        console.error(`User ${userId} (role: ${user?.role}) cannot delete room ${roomId} (created_by: ${room.created_by})`);
+        return { error: 'Недостаточно прав для удаления комнаты' };
+      }
     }
+
+    // Удаляем все сообщения этой комнаты
+    const allMessages = await kv.getByPrefix('message:');
+    let deletedMessagesCount = 0;
+    for (const item of allMessages) {
+      const message = item.value;
+      if (message && message.room_id === roomId) {
+        await kv.del(item.key);
+        deletedMessagesCount++;
+      }
+    }
+    console.log(`Deleted ${deletedMessagesCount} messages from room ${roomId}`);
+
+    // Удаляем все уведомления, связанные с этой комнатой
+    const allNotifications = await kv.getByPrefix('notification:');
+    let deletedNotificationsCount = 0;
+    for (const item of allNotifications) {
+      const notification = item.value;
+      if (notification && notification.room_id === roomId) {
+        await kv.del(item.key);
+        deletedNotificationsCount++;
+      }
+    }
+    console.log(`Deleted ${deletedNotificationsCount} notifications from room ${roomId}`);
 
     // Мягкое удаление - помечаем комнату как удаленную
     room.deleted = true;
@@ -377,8 +470,10 @@ export async function deleteRoom(roomId: string, userId: string) {
     room.deleted_by = userId;
     
     await kv.set(`room:${roomId}`, room);
+    
+    console.log(`Room ${roomId} (${room.name}) deleted by user ${userId} (${user?.username}). Deleted ${deletedMessagesCount} messages and ${deletedNotificationsCount} notifications`);
 
-    return { data: { success: true } };
+    return { data: { success: true, deletedMessages: deletedMessagesCount, deletedNotifications: deletedNotificationsCount } };
   } catch (err: any) {
     return { error: `Ошибка удаления комнаты: ${err.message}` };
   }
@@ -455,7 +550,8 @@ export async function getOrCreateFavorites(userId: string) {
       type: 'private',
       created_by: userId,
       created_at: new Date().toISOString(),
-      members: [userId]
+      members: [userId], // Только владелец
+      is_favorites: true // Флаг комнаты избранного
     };
 
     await kv.set(`room:${roomId}`, room);

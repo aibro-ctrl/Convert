@@ -119,7 +119,10 @@ export async function deleteNotification(notificationId: string, userId: string)
     const notification = await kv.get(notificationId);
     
     if (!notification) {
-      return { error: 'Уведомление не найдено' };
+      // Уведомление уже удалено — считаем это успешным сценарием,
+      // чтобы не показывать пользователю ошибку при повторном удалении.
+      console.log('Delete notification: notification not found, treat as success', notificationId);
+      return { data: { message: 'Уведомление уже удалено' } };
     }
 
     // @ts-ignore
@@ -224,6 +227,32 @@ export async function acceptFriendRequest(requestKey: string, userId: string): P
     
     if (!friendRequest) {
       console.log('Friend request not found:', requestKey);
+      
+      // Если самого запроса нет, попробуем понять, не стали ли пользователи уже друзьями
+      // Формат ключа: friend_request:fromUserId:toUserId
+      const parts = requestKey.split(':');
+      if (parts.length >= 3 && parts[0] === 'friend_request') {
+        const fromUserId = parts[1];
+        const toUserId = parts[2];
+        try {
+          const fromUser = await auth.getUserById(fromUserId);
+          const toUser = await auth.getUserById(toUserId);
+          
+          if (fromUser && toUser && 
+              Array.isArray(fromUser.friends) && 
+              Array.isArray(toUser.friends) &&
+              fromUser.friends.includes(toUserId) &&
+              toUser.friends.includes(fromUserId)) {
+            // Пользователи уже друзья – считаем, что запрос был обработан ранее
+            console.log('Friend request already processed, users are friends:', { fromUserId, toUserId });
+            return { data: { message: 'Запрос уже обработан' } };
+          }
+        } catch (err) {
+          console.error('Failed to check friends for missing friend request:', err);
+        }
+      }
+      
+      // В остальных случаях возвращаем стандартную ошибку
       return { error: 'Запрос не найден' };
     }
 
@@ -261,6 +290,52 @@ export async function acceptFriendRequest(requestKey: string, userId: string): P
     } catch (err) {
       // Ignore if doesn't exist
     }
+
+    // Удаляем все уведомления friend_request между этими пользователями
+    const fromUserId = friendRequest.fromUserId;
+    const toUserId = friendRequest.toUserId;
+    
+    // Получаем все уведомления получателя
+    const toUserNotificationsKey = `user_notifications:${toUserId}`;
+    const toUserNotifications = await kv.get(toUserNotificationsKey) || [];
+    
+    // Удаляем все уведомления friend_request от отправителя
+    const notificationsToDelete: string[] = [];
+    for (const notificationId of toUserNotifications) {
+      const notification = await kv.get(notificationId);
+      if (notification && 
+          notification.type === 'friend_request' && 
+          notification.fromUserId === fromUserId) {
+        notificationsToDelete.push(notificationId);
+        await kv.del(notificationId);
+      }
+    }
+    
+    // Обновляем список уведомлений получателя
+    const updatedToNotifications = toUserNotifications.filter(
+      (id: string) => !notificationsToDelete.includes(id)
+    );
+    await kv.set(toUserNotificationsKey, updatedToNotifications);
+    
+    // Также удаляем уведомления friend_request у отправителя (если есть)
+    const fromUserNotificationsKey = `user_notifications:${fromUserId}`;
+    const fromUserNotifications = await kv.get(fromUserNotificationsKey) || [];
+    const fromNotificationsToDelete: string[] = [];
+    for (const notificationId of fromUserNotifications) {
+      const notification = await kv.get(notificationId);
+      if (notification && 
+          notification.type === 'friend_request' && 
+          notification.fromUserId === toUserId) {
+        fromNotificationsToDelete.push(notificationId);
+        await kv.del(notificationId);
+      }
+    }
+    
+    // Обновляем список уведомлений отправителя
+    const updatedFromNotifications = fromUserNotifications.filter(
+      (id: string) => !fromNotificationsToDelete.includes(id)
+    );
+    await kv.set(fromUserNotificationsKey, updatedFromNotifications);
 
     // Создать уведомление для отправителя
     // @ts-ignore

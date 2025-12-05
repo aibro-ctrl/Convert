@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Message, storageAPI } from '../../utils/api';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
-import { X, Send, Mic, Video, BarChart3, Circle, Square, Paperclip, Camera, SwitchCamera, Image as ImageIcon } from '../ui/icons';
+import { X, Send, Mic, Video, BarChart3, Circle, Square, Paperclip, Camera, SwitchCamera, Image as ImageIcon, Smile } from '../ui/icons';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -10,6 +10,11 @@ import { Progress } from '../ui/progress';
 import { Checkbox } from '../ui/checkbox';
 import { toast } from '../ui/sonner';
 import { compressImage, compressAudio, compressVideo } from '../../utils/imageCompression';
+// Emoji picker (emoji-mart)
+// @ts-ignore – типы могут быть не установлены, но в рантайме будет работать
+import data from '@emoji-mart/data';
+// @ts-ignore
+import Picker from 'emoji-mart';
 
 interface MessageInputProps {
   onSend: (content: string, type: Message['type'], replyTo?: string) => void;
@@ -27,6 +32,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
   const [uploadProgress, setUploadProgress] = useState<{ show: boolean; message: string }>({ show: false, message: '' });
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showAttachDialog, setShowAttachDialog] = useState(false);
+  const [showEmojiMenu, setShowEmojiMenu] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -467,6 +473,14 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
     setShowAttachDialog(false);
   };
 
+  const handleAddEmoji = (emoji: any) => {
+    const native = emoji.native || emoji.shortcodes || '';
+    if (!native) return;
+    setContent((prev) => prev + native);
+    setShowEmojiMenu(false);
+    textareaRef.current?.focus();
+  };
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -527,7 +541,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
   };
 
   return (
-    <div className="border-t p-4 pb-8 bg-background">
+    <div className="border-t p-4 pb-8 bg-background relative">
       {/* Индикатор загрузки */}
       {uploadProgress.show && (
         <div className="mb-3 flex items-center gap-3 bg-blue-50 dark:bg-blue-950 rounded-lg px-4 py-3 border border-blue-200 dark:border-blue-800">
@@ -587,6 +601,18 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
           <Paperclip className="w-5 h-5" />
         </Button>
 
+        {/* Кнопка эмодзи (emoji-mart) */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => setShowEmojiMenu((v) => !v)}
+          disabled={disabled || isRecordingAudio || isRecordingVideo}
+          title="Эмодзи"
+          className="shrink-0"
+        >
+          <Smile className="w-5 h-5" />
+        </Button>
+
         {/* Скрытые inputs для файлов */}
         <input
           ref={fileInputRef}
@@ -629,6 +655,21 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
           <Send className="w-6 h-6" />
         </Button>
       </div>
+
+      {/* Emoji-mart picker (открывается поверх, как в мессенджерах) */}
+      {showEmojiMenu && (
+        <div className="absolute bottom-24 left-4 z-50">
+          {/* @ts-ignore emoji-mart Picker */}
+          <Picker
+            data={data}
+            onEmojiSelect={handleAddEmoji}
+            theme="light"
+            locale="ru"
+            previewPosition="none"
+            skinTonePosition="none"
+          />
+        </div>
+      )}
 
       {/* Диалог создания опроса */}
       <Dialog open={showPollDialog} onOpenChange={setShowPollDialog}>

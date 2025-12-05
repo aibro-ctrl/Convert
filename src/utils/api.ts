@@ -1,7 +1,10 @@
-import { projectId, publicAnonKey } from './supabase/info';
+import { supabaseUrl, publicAnonKey } from './supabase/info';
 import { isTokenExpired, clearStoragePreservingSettings } from './tokenUtils';
+import { apiCache, createCacheKey, APICache } from './cache';
 
-const API_URL = `https://${projectId}.supabase.co/functions/v1/make-server-b0f1e6d5`;
+// База для Supabase Edge Functions. Для self‑hosted/арендованной Supabase используем полный URL.
+// Пример: http://158.255.0.177:8000/functions/v1/make-server-b0f1e6d5
+const API_URL = `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/make-server-b0f1e6d5`;
 
 export interface User {
   id: string;
@@ -29,7 +32,9 @@ export interface Room {
   created_by: string;
   created_at: string;
   members: string[];
-  pinned_message_id?: string;
+  pinned_message_id?: string; // Текущее закрепленное сообщение
+  pinned_message_ids?: string[]; // История всех закрепленных сообщений
+  is_favorites?: boolean; // Флаг комнаты "Избранное"
   isGodMode?: boolean;
   dm_participants?: string[];
   unread_mentions?: Record<string, number>;
@@ -62,16 +67,94 @@ export interface Message {
   edited_at?: string;
 }
 
+// Retry функция для временных ошибок сервера
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries: number = 3,
+  retryDelay: number = 1000
+): Promise<Response> {
+  let lastError: Error | null = null;
+  const isCriticalRequest = url.includes('/auth/signin') || url.includes('/auth/signup');
+  
+  // Для критичных запросов (вход/регистрация) увеличиваем количество попыток
+  const actualMaxRetries = isCriticalRequest ? 5 : maxRetries;
+  
+  for (let attempt = 0; attempt < actualMaxRetries; attempt++) {
+    try {
+      // Увеличиваем timeout для запросов (30 секунд для обычных, 60 для критичных)
+      const timeout = isCriticalRequest ? 60000 : 30000;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
+      
+      // Если получили временную ошибку сервера (502, 503, 504), пробуем повторить
+      if (response.status === 502 || response.status === 503 || response.status === 504) {
+        if (attempt < actualMaxRetries - 1) {
+          const delay = retryDelay * (attempt + 1);
+          console.log(`Retrying request (attempt ${attempt + 1}/${actualMaxRetries}) for ${url} after ${delay}ms`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+      }
+      
+      return response;
+    } catch (error: any) {
+      lastError = error;
+      
+      // Если это timeout или network error, пробуем повторить
+      if (
+        (error.name === 'AbortError' || 
+         error.message?.includes('timeout') || 
+         error.message?.includes('Failed to fetch') ||
+         error.message?.includes('NetworkError')) &&
+        attempt < actualMaxRetries - 1
+      ) {
+        const delay = retryDelay * (attempt + 1);
+        console.log(`Retrying request after network error (attempt ${attempt + 1}/${actualMaxRetries}) for ${url} after ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      
+      // Если это последняя попытка, выбрасываем ошибку
+      if (attempt === actualMaxRetries - 1) {
+        throw error;
+      }
+    }
+  }
+  
+  throw lastError || new Error('Request failed after retries');
+}
+
 export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
+  // Кэширование для GET запросов
+  const isGetRequest = !options.method || options.method === 'GET';
+  const cacheKey = isGetRequest ? createCacheKey(endpoint, options.body ? JSON.parse(options.body as string) : undefined) : null;
+  
+  // НЕ кэшируем сообщения - они должны обновляться в реальном времени
+  const shouldCache = isGetRequest && cacheKey && !endpoint.includes('/messages') && !(endpoint.includes('/room/') && endpoint.includes('/messages'));
+  
+  // Проверяем кэш для GET запросов (кроме сообщений)
+  if (shouldCache) {
+    const cached = apiCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+  }
+  
   let token = localStorage.getItem('access_token');
-  console.log(`fetchAPI: Token from localStorage:`, token ? token.substring(0, 20) + '...' : 'null');
   
   // Check if token is expired before making request
-  if (token && isTokenExpired(token)) {
-    console.warn('fetchAPI: Token is expired, clearing localStorage');
-    clearStoragePreservingSettings();
-    // Don't use expired token - use anon key instead
-    token = null;
+  // Используем большой buffer (10 минут) - не выкидываем пользователя слишком рано
+  if (token && isTokenExpired(token, 600)) {
+    // НЕ очищаем токен - пользователь остается в системе
+    // Токен будет обновлен автоматически через refresh token
   }
   
   const headers: HeadersInit = {
@@ -83,31 +166,20 @@ export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
   // Supabase Edge Functions require Authorization header for all requests
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
-    console.log(`fetchAPI: Using user token for ${endpoint}`);
   } else {
     headers['Authorization'] = `Bearer ${publicAnonKey}`;
-    console.log(`fetchAPI: Using anon key for ${endpoint}`);
   }
 
   const url = `${API_URL}${endpoint}`;
-  console.log(`API Call: ${endpoint}`, { 
-    method: options.method || 'GET',
-    url,
-    headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [k, typeof v === 'string' && k === 'Authorization' ? v.substring(0, 30) + '...' : v]))
-  });
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       ...options,
       headers,
     });
 
-    console.log(`API Response: ${endpoint}`, { 
-      status: response.status, 
-      ok: response.ok,
-      statusText: response.statusText,
-      contentType: response.headers.get('content-type')
-    });
+    // Убрали лишнее логирование для оптимизации
+    // Логируем только ошибки
 
     if (!response.ok) {
       // Try to parse as JSON first
@@ -123,31 +195,120 @@ export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
         error = { error: `Server error: ${response.status} ${response.statusText}` };
       }
       
-      // Handle 401 errors - clear expired/invalid tokens
+      // Handle 401 errors - НЕ выкидываем пользователя, пробуем обновить токен
       if (response.status === 401) {
-        console.log(`API ${endpoint}: Unauthorized - clearing token`);
         if (token) {
-          console.log('Clearing expired/invalid token from localStorage');
-          clearStoragePreservingSettings();
-          // Trigger page reload to show login screen
-          setTimeout(() => window.location.reload(), 100);
+          // Пробуем обновить токен через refresh token
+          const refreshToken = localStorage.getItem('refresh_token');
+          if (refreshToken) {
+            try {
+              const refreshData = await fetch(`${API_URL}/auth/refresh`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${publicAnonKey}`,
+                },
+                body: JSON.stringify({ refresh_token: refreshToken }),
+              });
+              
+              if (refreshData.ok) {
+                const refreshResult = await refreshData.json();
+                localStorage.setItem('access_token', refreshResult.access_token);
+                if (refreshResult.refresh_token) {
+                  localStorage.setItem('refresh_token', refreshResult.refresh_token);
+                }
+                // Повторяем запрос с новым токеном
+                return fetchAPI(endpoint, options);
+              }
+            } catch (refreshError) {
+              // Тихая ошибка - не логируем для оптимизации
+            }
+          }
+          // Если не удалось обновить, НЕ выкидываем пользователя
+          // Просто возвращаем ошибку, пользователь останется в системе
         }
+      } else if (response.status === 502 || response.status === 503 || response.status === 504) {
+        // Gateway/Service Unavailable/Timeout - временные ошибки сервера
+        const errorMessage = response.status === 504 
+          ? 'Сервер не отвечает. Пожалуйста, попробуйте еще раз через несколько секунд.'
+          : 'Сервер временно недоступен. Пожалуйста, попробуйте еще раз.';
+        console.error(`API Gateway Error: ${endpoint}`, error);
+        throw new Error(errorMessage);
       } else {
-        console.error(`API Error: ${endpoint}`, error);
+        // Логируем только критические ошибки
+        if (response.status >= 500) {
+          console.error(`API Error: ${endpoint}`, error);
+        }
       }
       
       throw new Error(error.error || `Request failed with status ${response.status}`);
     }
 
     const data = await response.json();
-    console.log(`API Data: ${endpoint}`, data);
+    
+    // Кэшируем GET запросы, но НЕ кэшируем сообщения в открытом чате (они должны быть всегда актуальными)
+    if (isGetRequest && cacheKey && response.ok) {
+      // НЕ кэшируем сообщения - они должны обновляться в реальном времени
+      if (endpoint.includes('/messages') || endpoint.includes('/room/') && endpoint.includes('/messages')) {
+        // Пропускаем кэширование для сообщений
+      } else {
+        // Используем разное время кэширования в зависимости от типа данных
+        let cacheDuration = APICache.DURATION_MEDIUM; // 5 минут по умолчанию
+        
+        if (endpoint.includes('/rooms') || endpoint.includes('/dm/list')) {
+          cacheDuration = APICache.DURATION_SHORT; // 1 минута для списков комнат/DM
+        } else if (endpoint.includes('/users/') || endpoint.includes('/profile')) {
+          cacheDuration = APICache.DURATION_LONG; // 30 минут для профилей
+        }
+        
+        apiCache.set(cacheKey, data, cacheDuration);
+      }
+    }
+    
+    // Инвалидируем кэш при изменении данных (POST, PUT, DELETE)
+    if (!isGetRequest && response.ok) {
+      // При отправке сообщения инвалидируем все связанные кэши
+      if (endpoint.includes('/messages') || endpoint.includes('/send')) {
+        apiCache.invalidate('/messages');
+        apiCache.invalidate('/rooms');
+        apiCache.invalidate('/dm');
+      } else if (endpoint.includes('/rooms')) {
+        apiCache.invalidate('/rooms');
+      } else if (endpoint.includes('/users') || endpoint.includes('/profile')) {
+        apiCache.invalidate('/users');
+        apiCache.invalidate('/profile');
+      } else if (endpoint.includes('/friend')) {
+        apiCache.invalidate('/users');
+        apiCache.invalidate('/friend');
+      }
+    }
+    
     return data;
   } catch (error: any) {
     // Network error or other fetch error
-    if (error.message && !error.message.includes('Request failed')) {
-      console.error(`API Network Error: ${endpoint}`, error);
-      throw new Error(`Network error: ${error.message}`);
+    if (error.name === 'AbortError' || error.message?.includes('timeout')) {
+      console.error(`API Timeout: ${endpoint}`, error);
+      throw new Error('Превышено время ожидания ответа сервера. Пожалуйста, проверьте подключение к интернету и попробуйте еще раз.');
     }
+    
+    // Обработка ERR_CONNECTION_REFUSED и других ошибок подключения
+    const errorMessage = error.message || error.toString() || '';
+    const isConnectionRefused = errorMessage.includes('ERR_CONNECTION_REFUSED') || 
+                                errorMessage.includes('Failed to fetch') ||
+                                errorMessage.includes('NetworkError') ||
+                                errorMessage.includes('Network request failed');
+    
+    if (isConnectionRefused) {
+      console.error(`API Connection Refused: ${endpoint}`, error);
+      const serverUrl = supabaseUrl.replace(/\/+$/, '');
+      throw new Error(`Сервер недоступен. Убедитесь, что сервер запущен и доступен по адресу ${serverUrl}. Проверьте подключение к интернету.`);
+    }
+    
+    if (error.message && !error.message.includes('Request failed') && !error.message.includes('Сервер') && !error.message.includes('недоступен')) {
+      console.error(`API Network Error: ${endpoint}`, error);
+      throw new Error(`Ошибка сети: ${error.message}`);
+    }
+    
     throw error;
   }
 }
@@ -378,8 +539,8 @@ export const roomsAPI = {
       body: JSON.stringify({ messageId }),
     }),
 
-  unpinMessage: (roomId: string) =>
-    fetchAPI(`/rooms/${roomId}/pin`, {
+  unpinMessage: (roomId: string, messageId?: string) =>
+    fetchAPI(`/rooms/${roomId}/pin${messageId ? `/${messageId}` : ''}`, {
       method: 'DELETE',
     }),
 

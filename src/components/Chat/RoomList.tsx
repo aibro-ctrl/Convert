@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Room, roomsAPI } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { useSessionCrypto } from '../../contexts/SessionCryptoContext';
+import { decryptMessageContent } from '../../utils/messageEncryption';
 import { RoomManagement } from './RoomManagement';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -17,6 +19,7 @@ interface RoomListProps {
 
 export function RoomList({ onSelectRoom }: RoomListProps) {
   const { user, godModeEnabled } = useAuth();
+  const sessionCrypto = useSessionCrypto();
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -25,6 +28,9 @@ export function RoomList({ onSelectRoom }: RoomListProps) {
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [managingRoom, setManagingRoom] = useState<Room | null>(null);
+  const [decryptedPreviews, setDecryptedPreviews] = useState<Map<string, string>>(new Map());
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [roomToDelete, setRoomToDelete] = useState<Room | null>(null);
 
   useEffect(() => {
     // Очистка дублирующих Азкабанов при первой загрузке (только для админа)
@@ -33,16 +39,80 @@ export function RoomList({ onSelectRoom }: RoomListProps) {
     }
     
     loadRooms();
-    const interval = setInterval(loadRooms, 8000); // Real-time: обновление каждые 8 секунд
+    // Обновление списка комнат - не так часто как сообщения, но достаточно для актуальности (15 секунд)
+    const interval = setInterval(loadRooms, 15000);
     return () => clearInterval(interval);
   }, [godModeEnabled]); // Перезагружаем комнаты при изменении режима Глаза Бога
 
+  // Расшифровка превью сообщений (как в Telegram - всегда показываем расшифрованный текст)
+  useEffect(() => {
+    const decryptPreviews = async () => {
+      if (rooms.length === 0) {
+        setDecryptedPreviews(new Map());
+        return;
+      }
+
+      const previewMap = new Map<string, string>();
+      
+      for (const room of rooms) {
+        if (room.last_message && room.last_message.content) {
+          try {
+            const originalContent = room.last_message.content;
+            
+            // Проверяем, является ли контент зашифрованным
+            let isEncrypted = false;
+            try {
+              const parsed = JSON.parse(originalContent);
+              isEncrypted = parsed && parsed.version && parsed.ciphertext;
+            } catch {
+              // Не JSON, значит незашифрованное сообщение
+              isEncrypted = false;
+            }
+
+            // Если не зашифровано, используем как есть
+            if (!isEncrypted) {
+              previewMap.set(room.id, originalContent);
+              continue;
+            }
+
+            // Если зашифровано, пытаемся расшифровать
+            // Создаем объект сообщения для расшифровки
+            const messageForDecryption = {
+              id: room.last_message.id || '',
+              content: originalContent,
+              sender_id: room.last_message.sender_id || '',
+              room_id: room.id,
+              type: (room.last_message as any).type || 'text',
+              created_at: room.last_message.created_at || new Date().toISOString(),
+            } as any;
+
+            // Пытаемся расшифровать (decryptMessageContent автоматически использует базовое расшифрование если основное не готово)
+            const decrypted = await decryptMessageContent(
+              originalContent,
+              sessionCrypto,
+              messageForDecryption
+            );
+            
+            // Используем расшифрованный контент
+            previewMap.set(room.id, decrypted);
+          } catch (error) {
+            console.error(`Failed to decrypt preview for room ${room.id}:`, error);
+            // В случае ошибки показываем оригинал (может быть незашифрованное сообщение)
+            previewMap.set(room.id, room.last_message.content);
+          }
+        }
+      }
+
+      setDecryptedPreviews(previewMap);
+    };
+
+    decryptPreviews();
+  }, [rooms, sessionCrypto, sessionCrypto.sessionKey, sessionCrypto.isReady]);
+
   const loadRooms = async () => {
     try {
-      const startTime = Date.now();
       const data = await roomsAPI.getAll(godModeEnabled);
       setRooms(data.rooms);
-      console.log(`Rooms loaded in ${Date.now() - startTime}ms`);
       
       // Проверяем, забанен ли пользователь
       if (user?.banned) {
@@ -108,22 +178,37 @@ export function RoomList({ onSelectRoom }: RoomListProps) {
     onSelectRoom(room);
   };
 
-  const handleDeleteRoom = async (room: Room) => {
+  const handleDeleteRoom = (room: Room) => {
     const canDelete = 
       (room.type === 'public' && user && ['admin', 'moderator'].includes(user.role)) ||
-      (room.type === 'private' && room.created_by === user?.id);
+      (room.type === 'private' && room.created_by === user?.id) ||
+      (user && user.role === 'admin'); // Админ может удалять любые комнаты
 
     if (!canDelete) {
+      toast.error('У вас нет прав для удаления этой комнаты');
       return;
     }
 
+    setRoomToDelete(room);
+    setDeleteDialogOpen(true);
+    setShowContextMenu(false);
+  };
+
+  const confirmDeleteRoom = async () => {
+    if (!roomToDelete) return;
+
     try {
-      await roomsAPI.leave(room.id); // Используем leave как способ удаления
+      await roomsAPI.delete(roomToDelete.id);
+      toast.success('Комната удалена');
       loadRooms();
-      setShowContextMenu(false);
+      setDeleteDialogOpen(false);
+      setRoomToDelete(null);
       setSelectedRoom(null);
     } catch (error: any) {
       console.error('Ошибка удаления комнаты:', error);
+      toast.error(error.message || 'Не удалось удалить комнату');
+      setDeleteDialogOpen(false);
+      setRoomToDelete(null);
     }
   };
 
@@ -275,7 +360,7 @@ export function RoomList({ onSelectRoom }: RoomListProps) {
             return (
               <div key={room.id} className="relative">
                 <Card
-                  className="cursor-pointer hover:bg-accent transition-colors"
+                  className="cursor-pointer border border-border/60 bg-card/80 hover:bg-card/95 hover:border-primary/60 shadow-sm hover:shadow-lg transition-all duration-200 ease-out hover:-translate-y-0.5"
                   onClick={() => handleJoinRoom(room)}
                   onContextMenu={(e) => {
                     if (canManage) {
@@ -304,21 +389,70 @@ export function RoomList({ onSelectRoom }: RoomListProps) {
                         </CardTitle>
                         
                         {/* Превью последнего сообщения */}
-                        {room.last_message && (
+                        {room.last_message && room.last_message.content && room.last_message.content.trim() && (
                           <p className="text-sm text-muted-foreground mt-1 truncate">
                             <span className="font-medium">{room.last_message.sender_username}:</span>{' '}
                             {(() => {
-                              const content = room.last_message.content;
+                              // Используем расшифрованный контент, если доступен
+                              let content = decryptedPreviews.get(room.id);
+                              
+                              // Если расшифрованный контент не найден, используем оригинал
+                              // (расшифровка должна произойти в useEffect, но на всякий случай используем оригинал)
+                              if (!content) {
+                                content = room.last_message.content;
+                              }
+                              
+                              // Если контент пустой после расшифровки, не показываем превью
+                              if (!content || !content.trim()) {
+                                return null;
+                              }
+                              
+                              // Если контент все еще выглядит как зашифрованный JSON, пытаемся расшифровать на лету
+                              if (content && content.trim().startsWith('{') && content.includes('"version"') && content.includes('"ciphertext"')) {
+                                // Это зашифрованное сообщение, но расшифровка еще не произошла
+                                // Показываем оригинал (лучше чем заглушка) - расшифровка произойдет при следующем обновлении
+                                content = room.last_message.content;
+                              }
+                              
+                              // Если после всех проверок контент пустой, не показываем превью
+                              if (!content || !content.trim()) {
+                                return null;
+                              }
+                              
+                              const messageType = (room.last_message as any).type;
+                              
+                              // Проверка типа сообщения (приоритет)
+                              if (messageType === 'video') {
+                                return '🎥 Видео';
+                              }
+                              if (messageType === 'voice' || messageType === 'audio') {
+                                return '🎤 Голосовое';
+                              }
+                              
                               // Проверка на markdown изображение
                               if (content.startsWith('![') && content.includes('](')) {
                                 return '🖼️ Изображение';
                               }
-                              // Проверка на URL медиа
-                              if (content.startsWith('https://') && content.includes('supabase.co')) {
-                                if (content.includes('/voice/')) return '🎤 Голосовое сообщение';
-                                if (content.includes('/video/')) return '🎥 Видео-кружок';
-                                if (content.includes('/images/')) return '🖼️ Изображение';
+                              
+                              // Проверка на URL медиа (любой хост, не только supabase.co)
+                              if (content.startsWith('http://') || content.startsWith('https://')) {
+                                // Проверяем по пути в URL
+                                if (content.includes('/voice/') || content.includes('/audio/') || content.includes('voice') || content.includes('audio')) {
+                                  return '🎤 Голосовое';
+                                }
+                                if (content.includes('/video/') || content.includes('video')) {
+                                  return '🎥 Видео';
+                                }
+                                if (content.includes('/images/') || content.includes('/image/') || content.includes('images') || content.includes('image')) {
+                                  return '🖼️ Изображение';
+                                }
+                                // Если это просто URL без явного типа, проверяем по storage путям
+                                if (content.includes('/storage/v1/object/')) {
+                                  // Это может быть любой медиафайл, но без явного типа показываем как файл
+                                  return '📎 Файл';
+                                }
                               }
+                              
                               return content.substring(0, 50);
                             })()}
                           </p>
@@ -334,7 +468,7 @@ export function RoomList({ onSelectRoom }: RoomListProps) {
                           
                           {/* Счетчик непрочитанных */}
                           {room.unread_count && room.unread_count[user!.id] > 0 && (
-                            <Badge variant="default" className="bg-blue-500">
+                            <Badge variant="default" className="bg-red-500 text-white border-2 border-red-600">
                               {room.unread_count[user!.id]} новых
                             </Badge>
                           )}
@@ -415,6 +549,31 @@ export function RoomList({ onSelectRoom }: RoomListProps) {
           })
         )}
       </div>
+
+      {/* Диалог подтверждения удаления комнаты */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Удалить комнату?</DialogTitle>
+            <DialogDescription>
+              Вы уверены, что хотите удалить комнату "{roomToDelete?.name}"? 
+              <br />
+              Это действие необратимо. Все сообщения и данные комнаты будут удалены.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" onClick={() => {
+              setDeleteDialogOpen(false);
+              setRoomToDelete(null);
+            }}>
+              Отмена
+            </Button>
+            <Button variant="destructive" onClick={confirmDeleteRoom}>
+              Удалить
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

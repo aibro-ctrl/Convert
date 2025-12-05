@@ -14,16 +14,28 @@ import * as crypto from "./crypto.tsx";
 
 const app = new Hono();
 
+// Check environment variables
+const supabaseUrl = Deno.env.get('SUPABASE_URL');
+const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
+  console.error('Missing environment variables:');
+  console.error('SUPABASE_URL:', supabaseUrl ? 'set' : 'NOT SET');
+  console.error('SUPABASE_ANON_KEY:', supabaseAnonKey ? 'set' : 'NOT SET');
+  console.error('SUPABASE_SERVICE_ROLE_KEY:', supabaseServiceRoleKey ? 'set' : 'NOT SET');
+}
+
 // Admin client for admin operations
 const supabaseAdmin = createClient(
-  Deno.env.get('SUPABASE_URL')!,
-  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  supabaseUrl || 'http://localhost:8000',
+  supabaseServiceRoleKey || ''
 );
 
 // User client for authentication
 const supabaseAuth = createClient(
-  Deno.env.get('SUPABASE_URL')!,
-  Deno.env.get('SUPABASE_ANON_KEY')!
+  supabaseUrl || 'http://localhost:8000',
+  supabaseAnonKey || ''
 );
 
 // Enable logger
@@ -760,16 +772,37 @@ app.post("/make-server-b0f1e6d5/rooms", async (c) => {
     }
 
     const { name, type } = await c.req.json();
+    
+    if (!name || !type) {
+      return c.json({ error: 'Название и тип комнаты обязательны' }, 400);
+    }
+    
     const result = await rooms.createRoom(name, type, user.id);
     
     if (result.error) {
+      console.error('Create room result error:', result.error);
       return c.json({ error: result.error }, 400);
     }
 
+    if (!result.data) {
+      console.error('Create room - no data returned');
+      return c.json({ error: 'Не удалось создать комнату' }, 500);
+    }
+
     return c.json(result.data);
-  } catch (err) {
+  } catch (err: any) {
     console.error('Create room error:', err);
-    return c.json({ error: `Ошибка создания комнаты: ${err.message}` }, 500);
+    const errorMessage = err?.message || 'Неизвестная ошибка';
+    
+    // Проверяем на ошибки подключения к базе данных
+    if (errorMessage.includes('Database') || errorMessage.includes('SUPABASE') || errorMessage.includes('connection')) {
+      return c.json({ 
+        error: 'Ошибка подключения к базе данных. Проверьте настройки сервера.',
+        details: errorMessage
+      }, 500);
+    }
+    
+    return c.json({ error: `Ошибка создания комнаты: ${errorMessage}` }, 500);
   }
 });
 
@@ -926,7 +959,7 @@ app.post("/make-server-b0f1e6d5/rooms/:roomId/pin", async (c) => {
 });
 
 // Открепить сообщение
-app.delete("/make-server-b0f1e6d5/rooms/:roomId/pin", async (c) => {
+app.delete("/make-server-b0f1e6d5/rooms/:roomId/pin/:messageId?", async (c) => {
   try {
     const token = c.req.header('Authorization')?.split(' ')[1];
     if (!token) {
@@ -939,7 +972,9 @@ app.delete("/make-server-b0f1e6d5/rooms/:roomId/pin", async (c) => {
     }
 
     const roomId = c.req.param('roomId');
-    const result = await rooms.unpinMessage(roomId, user.id);
+    const messageId = c.req.param('messageId'); // Опциональный параметр
+    
+    const result = await rooms.unpinMessage(roomId, messageId || '', user.id);
     
     if (result.error) {
       return c.json({ error: result.error }, 400);
@@ -1073,8 +1108,11 @@ app.post("/make-server-b0f1e6d5/admin/clear-data", async (c) => {
     const roomsData = await kv.getByPrefix('room:');
     for (const item of roomsData) {
       const room = item.value;
-      // Сохраняем только системные комнаты
-      if (!room.name || (room.name !== 'Главная' && room.name !== 'Азкабан' && room.type !== 'system')) {
+      // Сохраняем только системные комнаты (Главная, Азкабан) и комнаты Избранное
+      const isSystemRoom = room.name === 'Главная' || room.name === '🔒 Азкабан' || room.type === 'system';
+      const isFavorites = room.is_favorites || room.name?.includes('Избранное');
+      
+      if (!isSystemRoom && !isFavorites) {
         await kv.del(item.key);
         deletedRooms++;
       }
@@ -2191,15 +2229,18 @@ app.post("/make-server-b0f1e6d5/admin/clear-data", async (c) => {
       }
     }
 
-    // Удаляем все комнаты (кроме системных)
+    // Удаляем все комнаты (кроме системных и Избранное)
     for (const item of allKeys) {
       if (item.key && item.key.startsWith('room:')) {
         const room = item.value;
-        // Не удаляем системные комнаты
-        if (room && !room.name?.includes('Азкабан') && !room.name?.includes('Избранное')) {
+        const isSystemRoom = room.name === 'Главная' || room.name === '🔒 Азкабан' || room.type === 'system';
+        const isFavorites = room.is_favorites || room.name?.includes('Избранное');
+        
+        // Не удаляем системные комнаты и Избранное
+        if (room && !isSystemRoom && !isFavorites) {
           await kv.del(item.key);
           deletedRooms++;
-        } else if (room) {
+        } else if (room && isSystemRoom) {
           // Очищаем сообщения из системных комнат
           const clearedRoom = {
             ...room,
@@ -2275,9 +2316,18 @@ app.post("/make-server-b0f1e6d5/admin/clear-data", async (c) => {
 
 console.log('=================================');
 console.log('Server starting...');
-console.log('SUPABASE_URL:', Deno.env.get('SUPABASE_URL') ? 'set' : 'NOT SET');
-console.log('SUPABASE_ANON_KEY:', Deno.env.get('SUPABASE_ANON_KEY') ? 'set' : 'NOT SET');
-console.log('SUPABASE_SERVICE_ROLE_KEY:', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ? 'set' : 'NOT SET');
+// Log environment variables status
+console.log('=== Environment Variables Check ===');
+console.log('SUPABASE_URL:', supabaseUrl || 'NOT SET');
+console.log('SUPABASE_ANON_KEY:', supabaseAnonKey ? `${supabaseAnonKey.substring(0, 20)}...` : 'NOT SET');
+console.log('SUPABASE_SERVICE_ROLE_KEY:', supabaseServiceRoleKey ? `${supabaseServiceRoleKey.substring(0, 20)}...` : 'NOT SET');
+console.log('===================================');
+
+if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
+  console.error('⚠️ WARNING: Missing required environment variables!');
+  console.error('Edge Function may not work correctly.');
+  console.error('Please set SUPABASE_URL, SUPABASE_ANON_KEY, and SUPABASE_SERVICE_ROLE_KEY in your deployment settings.');
+}
 console.log('Server ready to accept requests');
 console.log('=================================');
 
