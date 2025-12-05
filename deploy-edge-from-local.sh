@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-REMOTE_HOST="158.255.0.177"
+REMOTE_HOST="server"
 REMOTE_USER="root"
 REMOTE_TMP="/root/edge-deploy"
 CONTAINER_NAME="supabase-edge-functions"
