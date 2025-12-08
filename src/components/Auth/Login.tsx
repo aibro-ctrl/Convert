@@ -6,7 +6,7 @@ import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { toast } from '../ui/sonner';
-import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { supabaseUrl, publicAnonKey } from '../../utils/supabase/info';
 import { supabase } from '../../utils/supabase/client';
 
 interface LoginProps {
@@ -88,7 +88,7 @@ export function Login({ onSwitchToRegister }: LoginProps) {
     try {
       // Try to create test user first (use anon key for Supabase Edge Functions)
       const createResponse = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-b0f1e6d5/auth/signup`,
+        `${supabaseUrl}/functions/v1/make-server-b0f1e6d5/auth/signup`,
         {
           method: 'POST',
           headers: {

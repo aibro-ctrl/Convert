@@ -1,8 +1,8 @@
 // Lightweight Supabase client implementation
 // This avoids the need for @supabase/supabase-js package
-import { projectId, publicAnonKey } from './info';
+import { supabaseUrl as baseUrl, publicAnonKey } from './info';
 
-const supabaseUrl = `https://${projectId}.supabase.co`;
+const supabaseUrl = baseUrl;
 
 interface AuthSession {
   access_token: string;

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { supabaseUrl, publicAnonKey } from '../utils/supabase/info';
 
 interface ConnectionContextType {
   isOnline: boolean;
@@ -16,7 +16,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   const checkConnection = useCallback(async () => {
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-b0f1e6d5/health`,
+        `${supabaseUrl}/functions/v1/make-server-b0f1e6d5/health`,
         {
           method: 'GET',
           headers: {

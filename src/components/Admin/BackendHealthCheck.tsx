@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { supabaseUrl, publicAnonKey } from '../../utils/supabase/info';
 
 export function BackendHealthCheck() {
   const [status, setStatus] = useState<'checking' | 'online' | 'offline'>('checking');
@@ -10,7 +10,7 @@ export function BackendHealthCheck() {
     setStatus('checking');
     setError(null);
 
-    const healthUrl = `https://${projectId}.supabase.co/functions/v1/make-server-b0f1e6d5/health`;
+    const healthUrl = `${supabaseUrl}/functions/v1/make-server-b0f1e6d5/health`;
     
     try {
       console.log('BackendHealthCheck: Testing connection to:', healthUrl);
@@ -115,7 +115,7 @@ export function BackendHealthCheck() {
         {/* Connection info */}
         <div className="text-xs opacity-40 mt-2 border-t border-white/10 pt-2">
           <div className="truncate">
-            Endpoint: ...{projectId.slice(-8)}.supabase.co
+            Endpoint: {supabaseUrl}
           </div>
         </div>
 
