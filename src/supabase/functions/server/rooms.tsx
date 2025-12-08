@@ -48,7 +48,11 @@ export async function createRoom(
       type,
       created_by: userId,
       created_at: new Date().toISOString(),
-      members: [userId]
+      members: [userId],
+      // Инициализируем счетчики при создании комнаты
+      unread_mentions: {},
+      unread_reactions: {},
+      unread_count: {}
     };
 
     await kv.set(`room:${roomId}`, room);
@@ -84,6 +88,16 @@ export async function getRooms(userId: string, godModeEnabled: boolean = false) 
           azkaban.members.push(userId);
           await kv.set(`room:${azkaban.id}`, azkaban);
         }
+        // Инициализируем счетчики, если их нет
+        if (!azkaban.unread_mentions) {
+          azkaban.unread_mentions = {};
+        }
+        if (!azkaban.unread_reactions) {
+          azkaban.unread_reactions = {};
+        }
+        if (!azkaban.unread_count) {
+          azkaban.unread_count = {};
+        }
         return [azkaban];
       }
       
@@ -99,10 +113,22 @@ export async function getRooms(userId: string, godModeEnabled: boolean = false) 
       const filteredGodModeRooms = activeRooms.filter((room: Room) => 
         !room.is_favorites && !room.name.includes('⭐ Избранное') && !room.name.includes('Избранное')
       );
-      return filteredGodModeRooms.map((room: Room) => ({
-        ...room,
-        isGodMode: !room.members.includes(userId)
-      }));
+      return filteredGodModeRooms.map((room: Room) => {
+        // Инициализируем счетчики, если их нет
+        if (!room.unread_mentions) {
+          room.unread_mentions = {};
+        }
+        if (!room.unread_reactions) {
+          room.unread_reactions = {};
+        }
+        if (!room.unread_count) {
+          room.unread_count = {};
+        }
+        return {
+          ...room,
+          isGodMode: !room.members.includes(userId)
+        };
+      });
     }
 
     // Обычные пользователи (и админы без режима Глаза Бога) видят публичные комнаты и свои приватные/DM
@@ -127,7 +153,24 @@ export async function getRooms(userId: string, godModeEnabled: boolean = false) 
     
     console.log('getRooms - filtered rooms for user:', filteredRooms.length);
     
-    return filteredRooms;
+    // Инициализируем unread_mentions и unread_reactions для каждой комнаты, если они не существуют
+    // ВАЖНО: инициализируем только в памяти, не сохраняем в базу (чтобы не перезаписывать существующие значения)
+    const roomsWithCounts = filteredRooms.map((room: Room) => {
+      // Создаем копию комнаты, чтобы не изменять оригинал
+      const roomCopy = { ...room };
+      if (!roomCopy.unread_mentions) {
+        roomCopy.unread_mentions = {};
+      }
+      if (!roomCopy.unread_reactions) {
+        roomCopy.unread_reactions = {};
+      }
+      if (!roomCopy.unread_count) {
+        roomCopy.unread_count = {};
+      }
+      return roomCopy;
+    });
+    
+    return roomsWithCounts;
   } catch (err: any) {
     console.error('Error getting rooms:', err);
     console.error('getRooms error stack:', err?.stack);
@@ -531,14 +574,17 @@ export async function getRoom(roomId: string): Promise<Room | null> {
 // Создание или получение комнаты избранного для пользователя
 export async function getOrCreateFavorites(userId: string) {
   try {
-    // Ищем существующую комнату избранного
+    // Ищем существующую комнату избранного для этого пользователя
     const allRooms = await kv.getByPrefix('room:');
     const existingFavorite = allRooms.find((room: Room) => 
       !room.deleted &&
-      (room.name === `⭐ Избранное (${userId})` || room.name.includes(`Избранное`) && room.members.includes(userId) && room.type === 'private')
+      room.is_favorites === true &&
+      room.created_by === userId &&
+      room.members.includes(userId)
     );
 
     if (existingFavorite) {
+      console.log(`Found existing favorites room for user ${userId}: ${existingFavorite.id}`);
       return { data: existingFavorite };
     }
 
@@ -555,8 +601,10 @@ export async function getOrCreateFavorites(userId: string) {
     };
 
     await kv.set(`room:${roomId}`, room);
+    console.log(`Created new favorites room for user ${userId}: ${roomId}`);
     return { data: room };
   } catch (err: any) {
+    console.error('Error in getOrCreateFavorites:', err);
     return { error: `Ошибка создания избранного: ${err.message}` };
   }
 }

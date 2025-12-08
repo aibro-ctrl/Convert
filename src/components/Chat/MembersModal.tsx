@@ -4,6 +4,7 @@ import { Badge } from '../ui/badge';
 import { Avatar, AvatarImage, AvatarFallback } from '../ui/avatar';
 import { User as UserIcon, Shield, Crown } from '../ui/icons';
 import { User } from '../../utils/api';
+import { fixMediaUrl } from '../../utils/urlFix';
 
 interface MembersModalProps {
   isOpen: boolean;
@@ -69,7 +70,7 @@ export function MembersModal({ isOpen, onClose, members, roomId, canModerate, on
               <Avatar className="w-10 h-10">
                 {((member as any).avatar || (member as any).avatar_url) ? (
                   <AvatarImage 
-                    src={(member as any).avatar || (member as any).avatar_url} 
+                    src={fixMediaUrl((member as any).avatar || (member as any).avatar_url)} 
                     alt={(member as any).display_name || member.username}
                   />
                 ) : (

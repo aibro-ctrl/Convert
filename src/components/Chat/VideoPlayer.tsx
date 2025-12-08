@@ -65,20 +65,6 @@ export function VideoPlayer({ src }: VideoPlayerProps) {
         
         {/* Круговая обводка с прогрессом воспроизведения */}
         <div className="absolute inset-0 rounded-full border-4 border-primary/20 pointer-events-none" />
-        
-        {/* Play/Pause overlay button */}
-        <div className="absolute inset-0 flex items-center justify-center">
-          <div className={`w-16 h-16 rounded-full bg-black/60 backdrop-blur-sm flex items-center justify-center transition-opacity ${isPlaying ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'}`}>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handlePlayPauseClick}
-              className="w-full h-full text-white hover:bg-transparent"
-            >
-              {isPlaying ? <Pause className="w-8 h-8" /> : <Play className="w-8 h-8 ml-1" />}
-            </Button>
-          </div>
-        </div>
 
         {/* Mute button overlay */}
         <div className="absolute bottom-2 right-2">

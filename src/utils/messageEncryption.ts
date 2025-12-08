@@ -92,9 +92,26 @@ export async function decryptMessageContent(
     return encryptedContent;
   }
   
-  // Если сессионное шифрование не готово, возвращаем как есть (может быть незашифрованное сообщение)
-  if (!sessionCryptoContext || !sessionCryptoContext.isReady) {
+  // Проверяем, является ли контент зашифрованным JSON
+  let isEncrypted = false;
+  try {
+    const parsed = JSON.parse(encryptedContent);
+    if (parsed && typeof parsed === 'object' && ('ciphertext' in parsed || 'version' in parsed)) {
+      isEncrypted = true;
+    }
+  } catch {
+    // Не JSON, значит незашифрованное сообщение
+    isEncrypted = false;
+  }
+  
+  // Если не зашифровано, возвращаем как есть
+  if (!isEncrypted) {
     return encryptedContent;
+  }
+  
+  // Если сессионное шифрование не готово, возвращаем заглушку вместо зашифрованного JSON
+  if (!sessionCryptoContext || !sessionCryptoContext.isReady) {
+    return '[сообщение]';
   }
 
   try {
@@ -103,16 +120,8 @@ export async function decryptMessageContent(
     return decrypted;
   } catch (error) {
     console.error('SessionCrypto: Decryption failed:', error);
-    // Если это похоже на зашифрованный JSON, не показываем «сырой» объект в UI
-    try {
-      const parsed = JSON.parse(encryptedContent);
-      if (parsed && typeof parsed === 'object' && 'ciphertext' in parsed) {
-        return '[сообщение]';
-      }
-    } catch {
-      // не JSON — просто вернём как есть
-    }
-    return encryptedContent;
+    // Если расшифровка не удалась, возвращаем заглушку вместо зашифрованного JSON
+    return '[сообщение]';
   }
 }
 

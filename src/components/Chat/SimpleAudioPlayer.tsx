@@ -68,7 +68,7 @@ export function SimpleAudioPlayer({ src }: SimpleAudioPlayerProps) {
   };
 
   return (
-    <div className="flex flex-col gap-2 p-4 bg-gradient-to-br from-primary/5 to-primary/10 rounded-xl border border-primary/20 min-w-[250px] shadow-sm">
+    <div className="flex items-center gap-3 p-3 bg-primary rounded-2xl min-w-[280px] shadow-lg">
       <audio
         ref={audioRef}
         src={fixedSrc}
@@ -80,43 +80,44 @@ export function SimpleAudioPlayer({ src }: SimpleAudioPlayerProps) {
         }}
       />
       
-      <div className="flex items-center gap-3">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={togglePlayPause}
-          className="shrink-0 h-10 w-10 rounded-full bg-primary/10 hover:bg-primary/20 transition-colors"
-        >
-          {isPlaying ? <Pause className="w-5 h-5 text-primary" /> : <Play className="w-5 h-5 text-primary ml-0.5" />}
-        </Button>
+      {/* Кнопка Play/Pause */}
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={togglePlayPause}
+        className="h-12 w-12 shrink-0 rounded-full bg-white/20 hover:bg-white/30 text-white transition-colors"
+      >
+        {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-0.5" />}
+      </Button>
 
-        <div className="flex-1 space-y-1">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground font-mono">{formatTime(currentTime)}</span>
-            <Slider
-              value={[currentTime]}
-              min={0}
-              max={duration || 100}
-              step={0.1}
-              onValueChange={handleSeek}
-              className="flex-1"
-            />
-            <span className="text-xs text-muted-foreground font-mono">{formatTime(duration)}</span>
-          </div>
+      {/* Воспроизведение */}
+      <div className="flex-1 space-y-2">
+        <div className="flex items-center gap-2">
+          <span className="text-white text-xs font-mono min-w-[35px]">{formatTime(currentTime)}</span>
+          <Slider
+            value={[currentTime]}
+            min={0}
+            max={duration || 100}
+            step={0.1}
+            onValueChange={handleSeek}
+            className="flex-1"
+          />
+          <span className="text-white text-xs font-mono min-w-[35px] text-right">{formatTime(duration)}</span>
         </div>
-      </div>
 
-      <div className="flex items-center gap-2 px-1">
-        <Volume2 className="w-4 h-4 shrink-0 text-muted-foreground" />
-        <Slider
-          value={[volume]}
-          min={0}
-          max={1}
-          step={0.1}
-          onValueChange={handleVolumeChange}
-          className="flex-1"
-        />
-        <span className="text-xs text-muted-foreground font-mono w-8 text-right">{Math.round(volume * 100)}%</span>
+        {/* Громкость */}
+        <div className="flex items-center gap-2">
+          <Volume2 className="w-3 h-3 shrink-0 text-white/80" />
+          <Slider
+            value={[volume]}
+            min={0}
+            max={1}
+            step={0.1}
+            onValueChange={handleVolumeChange}
+            className="flex-1 h-1"
+          />
+          <span className="text-white text-[10px] font-mono min-w-[35px] text-right">{Math.round(volume * 100)}%</span>
+        </div>
       </div>
     </div>
   );

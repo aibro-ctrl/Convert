@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Label } from '../ui/label';
 import { Badge } from '../ui/badge';
 import { toast } from '../ui/sonner';
-import { Plus, Users, Lock, Eye, AtSign, Heart, MessageCircle, Edit, Trash2 } from '../ui/icons';
+import { Plus, Users, Lock, Eye, AtSign, Heart, MessageCircle, Edit, Trash2, Mail } from '../ui/icons';
 
 interface RoomListProps {
   onSelectRoom: (room: Room) => void;
@@ -59,23 +59,7 @@ export function RoomList({ onSelectRoom }: RoomListProps) {
           try {
             const originalContent = room.last_message.content;
             
-            // Проверяем, является ли контент зашифрованным
-            let isEncrypted = false;
-            try {
-              const parsed = JSON.parse(originalContent);
-              isEncrypted = parsed && parsed.version && parsed.ciphertext;
-            } catch {
-              // Не JSON, значит незашифрованное сообщение
-              isEncrypted = false;
-            }
-
-            // Если не зашифровано, используем как есть
-            if (!isEncrypted) {
-              previewMap.set(room.id, originalContent);
-              continue;
-            }
-
-            // Если зашифровано, пытаемся расшифровать
+            // Всегда пытаемся расшифровать - decryptMessageContent сам определит, нужно ли расшифровывать
             // Создаем объект сообщения для расшифровки
             const messageForDecryption = {
               id: room.last_message.id || '',
@@ -86,14 +70,14 @@ export function RoomList({ onSelectRoom }: RoomListProps) {
               created_at: room.last_message.created_at || new Date().toISOString(),
             } as any;
 
-            // Пытаемся расшифровать (decryptMessageContent автоматически использует базовое расшифрование если основное не готово)
+            // Пытаемся расшифровать (decryptMessageContent автоматически определит, зашифровано ли сообщение)
             const decrypted = await decryptMessageContent(
               originalContent,
               sessionCrypto,
               messageForDecryption
             );
             
-            // Используем расшифрованный контент
+            // Используем расшифрованный контент (или оригинал, если не зашифровано)
             previewMap.set(room.id, decrypted);
           } catch (error) {
             console.error(`Failed to decrypt preview for room ${room.id}:`, error);
@@ -245,10 +229,17 @@ export function RoomList({ onSelectRoom }: RoomListProps) {
 
   // Фильтруем DM комнаты и избранное (DM теперь в отдельной системе)
   let filteredRooms = rooms
-    .filter(room => 
-      room.type !== 'dm' && // Убираем личные диалоги (теперь в отдельной системе)
-      !room.name.includes('⭐ Избранное') && !room.name.includes('Избранное') // Убираем избранное
-    );
+    .filter(room => {
+      // Убираем личные диалоги (теперь в отдельной системе)
+      if (room.type === 'dm') return false;
+      
+      // Комнаты "Избранное" показываем только создателю
+      if (room.is_favorites || room.name.includes('⭐ Избранное') || room.name.includes('Избранное')) {
+        return room.created_by === user?.id && room.members.includes(user?.id || '');
+      }
+      
+      return true;
+    });
   
   // Фильтрация комнаты Азкабан:
   // - Забаненные видят ТОЛЬКО Азкабан
@@ -356,6 +347,8 @@ export function RoomList({ onSelectRoom }: RoomListProps) {
             const canManage = 
               (room.type === 'public' && user && ['admin', 'moderator'].includes(user.role)) ||
               (room.type === 'private' && room.created_by === user?.id);
+            
+            // Отладочная информация для меншенов (удалено для продакшена)
 
             return (
               <div key={room.id} className="relative">
@@ -459,28 +452,38 @@ export function RoomList({ onSelectRoom }: RoomListProps) {
                         )}
                         
                         <div className="flex gap-2 mt-2 flex-wrap">
-                          <Badge variant={room.type === 'public' ? 'default' : 'outline'}>
-                            {room.type === 'public' ? 'Публичная' : 'Приватная'}
-                          </Badge>
-                          <Badge variant="secondary">
-                            {room.members.length} участников
-                          </Badge>
+                          {/* Для комнаты "Избранное" не показываем статусы */}
+                          {!room.is_favorites && (
+                            <Badge variant={room.type === 'public' ? 'default' : 'outline'}>
+                              {room.type === 'public' ? 'Публичная' : 'Приватная'}
+                            </Badge>
+                          )}
                           
-                          {/* Счетчик непрочитанных */}
+                          {/* Счетчик непрочитанных - заменяем "новых" на иконку конверта */}
                           {room.unread_count && room.unread_count[user!.id] > 0 && (
-                            <Badge variant="default" className="bg-red-500 text-white border-2 border-red-600">
-                              {room.unread_count[user!.id]} новых
+                            <Badge variant="default" className="bg-red-500 text-white border-2 border-red-600 flex items-center gap-1">
+                              <Mail className="w-3 h-3" />
+                              {room.unread_count[user!.id]}
                             </Badge>
                           )}
                           
-                          {room.unread_mentions && room.unread_mentions[user!.id] > 0 && (
-                            <Badge variant="destructive" className="flex items-center gap-1">
-                              <AtSign className="w-3 h-3" />
-                              {room.unread_mentions[user!.id]}
-                            </Badge>
-                          )}
+                          {/* Упоминания - красный цвет */}
+                          {(() => {
+                            const mentionCount = room.unread_mentions?.[user!.id];
+                            const hasMentions = mentionCount !== undefined && mentionCount !== null && Number(mentionCount) > 0;
+                            if (hasMentions) {
+                              return (
+                                <Badge variant="default" className="bg-red-500 text-white border-2 border-red-600 flex items-center gap-1">
+                                  <AtSign className="w-3 h-3" />
+                                  {mentionCount}
+                                </Badge>
+                              );
+                            }
+                            return null;
+                          })()}
+                          {/* Реакции - красный цвет */}
                           {room.unread_reactions && room.unread_reactions[user!.id] > 0 && (
-                            <Badge variant="default" className="flex items-center gap-1 bg-pink-500">
+                            <Badge variant="default" className="bg-red-500 text-white border-2 border-red-600 flex items-center gap-1">
                               <Heart className="w-3 h-3" />
                               {room.unread_reactions[user!.id]}
                             </Badge>

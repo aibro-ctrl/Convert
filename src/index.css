@@ -3934,6 +3934,17 @@ html {
     animation: context-menu-pop 0.18s var(--ease-in-out);
     transform-origin: bottom center;
   }
+
+  @keyframes emoji-picker-pop {
+    0% {
+      opacity: 0;
+      transform: translateY(8px) scale(0.95);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
 @keyframes spin {
   to {
     transform: rotate(360deg);

@@ -23,6 +23,7 @@ export function RoomManagement({ room, onBack }: RoomManagementProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
+  const searchTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
   const isAdmin = user?.role === 'admin';
   const isModerator = user?.role === 'moderator';
@@ -92,6 +93,25 @@ export function RoomManagement({ room, onBack }: RoomManagementProps) {
       toast.error('Ошибка поиска');
       setSearchResults([]);
     }
+  };
+
+  // Debounce для поиска
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    
+    // Очищаем предыдущий таймер
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    // Устанавливаем новый таймер
+    searchTimeoutRef.current = setTimeout(() => {
+      if (value.trim().length >= 2) {
+        handleSearchUsers(value);
+      } else {
+        setSearchResults([]);
+      }
+    }, 300);
   };
 
   const handleAddMember = async (userId: string) => {
@@ -204,40 +224,39 @@ export function RoomManagement({ room, onBack }: RoomManagementProps) {
             <CardTitle>Участники ({members.length})</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {/* Search and add */}
-            <div className="space-y-2">
-              <Label>Добавить участника</Label>
-              <div className="flex gap-2">
-                <Input
-                  value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    handleSearchUsers(e.target.value);
-                  }}
-                  placeholder="Поиск пользователя..."
-                  onKeyDown={(e) => e.key === 'Enter' && handleSearchUsers()}
-                />
-                <Button onClick={() => handleSearchUsers()}>
-                  <UserPlus className="w-4 h-4" />
-                </Button>
-              </div>
-              
-              {searchResults.length > 0 && (
-                <div className="border rounded-lg divide-y">
-                  {searchResults.map((searchUser) => (
-                    <div key={searchUser.id} className="flex items-center justify-between p-2">
-                      <div>
-                        <p>{searchUser.username}</p>
-                        <p className="text-sm text-muted-foreground">{searchUser.email}</p>
-                      </div>
-                      <Button size="sm" onClick={() => handleAddMember(searchUser.id)}>
-                        Добавить
-                      </Button>
-                    </div>
-                  ))}
+            {/* Search and add - скрываем для комнаты "Избранное" */}
+            {!room.is_favorites && (
+              <div className="space-y-2">
+                <Label>Добавить участника</Label>
+                <div className="flex gap-2">
+                  <Input
+                    value={searchQuery}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    placeholder="Поиск пользователя..."
+                    onKeyDown={(e) => e.key === 'Enter' && handleSearchUsers()}
+                  />
+                  <Button onClick={() => handleSearchUsers()}>
+                    <UserPlus className="w-4 h-4" />
+                  </Button>
                 </div>
-              )}
-            </div>
+                
+                {searchResults.length > 0 && (
+                  <div className="border rounded-lg divide-y">
+                    {searchResults.map((searchUser) => (
+                      <div key={searchUser.id} className="flex items-center justify-between p-2">
+                        <div>
+                          <p>{searchUser.username}</p>
+                          <p className="text-sm text-muted-foreground">{searchUser.email}</p>
+                        </div>
+                        <Button size="sm" onClick={() => handleAddMember(searchUser.id)}>
+                          Добавить
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Current members */}
             <div className="space-y-2">

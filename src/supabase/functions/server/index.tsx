@@ -1347,6 +1347,60 @@ app.post("/make-server-b0f1e6d5/messages/:messageId/react", async (c) => {
   }
 });
 
+// Удалить реакцию
+app.delete("/make-server-b0f1e6d5/messages/:messageId/react", async (c) => {
+  try {
+    const token = c.req.header('Authorization')?.split(' ')[1];
+    if (!token) {
+      return c.json({ error: 'Требуется авторизация' }, 401);
+    }
+
+    const user = await auth.getUserFromToken(token);
+    if (!user) {
+      return c.json({ error: 'Недействительный токен' }, 401);
+    }
+
+    const messageId = c.req.param('messageId');
+    // Пробуем получить emoji из query параметра (для DELETE запросов)
+    let emoji = c.req.query('emoji');
+    
+    // Декодируем emoji из URL
+    if (emoji) {
+      try {
+        emoji = decodeURIComponent(emoji);
+      } catch {
+        // Если не удалось декодировать, используем как есть
+      }
+    }
+    
+    // Если нет в query, пробуем из body
+    if (!emoji) {
+      try {
+        const body = await c.req.json();
+        emoji = body.emoji;
+      } catch {
+        // Игнорируем ошибку парсинга body
+      }
+    }
+    
+    if (!emoji) {
+      return c.json({ error: 'Эмодзи не указано' }, 400);
+    }
+    
+    console.log('Removing reaction:', { messageId, userId: user.id, emoji });
+    const result = await messages.removeReaction(messageId, user.id, emoji);
+    
+    if (result.error) {
+      return c.json({ error: result.error }, 400);
+    }
+
+    return c.json(result.data);
+  } catch (err) {
+    console.error('Remove reaction error:', err);
+    return c.json({ error: `Ошибка удаления реакции: ${err.message}` }, 500);
+  }
+});
+
 // Редактировать сообщение
 app.put("/make-server-b0f1e6d5/messages/:messageId", async (c) => {
   try {

@@ -137,8 +137,13 @@ export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
   const isGetRequest = !options.method || options.method === 'GET';
   const cacheKey = isGetRequest ? createCacheKey(endpoint, options.body ? JSON.parse(options.body as string) : undefined) : null;
   
-  // НЕ кэшируем сообщения - они должны обновляться в реальном времени
-  const shouldCache = isGetRequest && cacheKey && !endpoint.includes('/messages') && !(endpoint.includes('/room/') && endpoint.includes('/messages'));
+  // НЕ кэшируем сообщения и списки комнат - они должны обновляться в реальном времени
+  const shouldCache = isGetRequest && cacheKey && 
+    !endpoint.includes('/messages') && 
+    !(endpoint.includes('/room/') && endpoint.includes('/messages')) &&
+    endpoint !== '/rooms' && 
+    !endpoint.startsWith('/rooms?') &&
+    endpoint !== '/dm/list';
   
   // Проверяем кэш для GET запросов (кроме сообщений)
   if (shouldCache) {
@@ -182,6 +187,13 @@ export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
     // Логируем только ошибки
 
     if (!response.ok) {
+      // Для 404 ошибок при удалении реакций - это нормально, если реакция уже удалена
+      if (response.status === 404 && endpoint.includes('/react') && options.method === 'DELETE') {
+        console.log('Reaction already removed (404), this is OK');
+        // Возвращаем пустой объект вместо ошибки
+        return { data: null };
+      }
+      
       // Try to parse as JSON first
       let error;
       const contentType = response.headers.get('content-type');
@@ -248,16 +260,19 @@ export async function fetchAPI(endpoint: string, options: RequestInit = {}) {
     
     // Кэшируем GET запросы, но НЕ кэшируем сообщения в открытом чате (они должны быть всегда актуальными)
     if (isGetRequest && cacheKey && response.ok) {
-      // НЕ кэшируем сообщения - они должны обновляться в реальном времени
-      if (endpoint.includes('/messages') || endpoint.includes('/room/') && endpoint.includes('/messages')) {
-        // Пропускаем кэширование для сообщений
+      // НЕ кэшируем сообщения и списки комнат - они должны обновляться в реальном времени
+      if (endpoint.includes('/messages') || 
+          (endpoint.includes('/room/') && endpoint.includes('/messages')) ||
+          endpoint === '/rooms' || 
+          endpoint.startsWith('/rooms?') ||
+          endpoint === '/dm/list') {
+        // Пропускаем кэширование для сообщений и списков комнат/DM
+        // Это нужно для обновления счетчиков уведомлений в реальном времени
       } else {
         // Используем разное время кэширования в зависимости от типа данных
         let cacheDuration = APICache.DURATION_MEDIUM; // 5 минут по умолчанию
         
-        if (endpoint.includes('/rooms') || endpoint.includes('/dm/list')) {
-          cacheDuration = APICache.DURATION_SHORT; // 1 минута для списков комнат/DM
-        } else if (endpoint.includes('/users/') || endpoint.includes('/profile')) {
+        if (endpoint.includes('/users/') || endpoint.includes('/profile')) {
           cacheDuration = APICache.DURATION_LONG; // 30 минут для профилей
         }
         
@@ -598,6 +613,11 @@ export const messagesAPI = {
     fetchAPI(`/messages/${messageId}/react`, {
       method: 'POST',
       body: JSON.stringify({ emoji }),
+    }),
+
+  removeReaction: (messageId: string, emoji: string) =>
+    fetchAPI(`/messages/${messageId}/react?emoji=${encodeURIComponent(emoji)}`, {
+      method: 'DELETE',
     }),
 
   search: (roomId: string, query: string) =>

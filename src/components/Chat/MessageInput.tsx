@@ -10,21 +10,62 @@ import { Progress } from '../ui/progress';
 import { Checkbox } from '../ui/checkbox';
 import { toast } from '../ui/sonner';
 import { compressImage, compressAudio, compressVideo } from '../../utils/imageCompression';
-// Emoji picker (emoji-mart)
-// @ts-ignore – типы могут быть не установлены, но в рантайме будет работать
-import data from '@emoji-mart/data';
-// @ts-ignore
-import Picker from 'emoji-mart';
+import { CustomEmojiPicker } from './CustomEmojiPicker';
+import { useSessionCrypto } from '../../contexts/SessionCryptoContext';
+import { decryptMessageContent } from '../../utils/messageEncryption';
+import { usersAPI, User } from '../../utils/api';
+import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
+import { fixMediaUrl } from '../../utils/urlFix';
 
 interface MessageInputProps {
-  onSend: (content: string, type: Message['type'], replyTo?: string) => void;
+  onSend: (content: string, type: Message['type'], replyTo?: string, editingMessageId?: string) => void;
   replyingTo: Message | null;
   onCancelReply: () => void;
   disabled?: boolean;
+  editingMessage?: Message | null;
+  onCancelEdit?: () => void;
 }
 
-export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: MessageInputProps) {
+export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, editingMessage, onCancelEdit }: MessageInputProps) {
   const [content, setContent] = useState('');
+  const sessionCrypto = useSessionCrypto();
+  
+  // Устанавливаем текст редактируемого сообщения в поле ввода
+  useEffect(() => {
+    if (editingMessage) {
+      // Расшифровываем сообщение для редактирования
+      const decryptAndSetContent = async () => {
+        try {
+          const decrypted = await decryptMessageContent(editingMessage.content, sessionCrypto, editingMessage);
+          setContent(decrypted);
+          // Фокусируемся на поле ввода после небольшой задержки
+          setTimeout(() => {
+            textareaRef.current?.focus();
+            // Устанавливаем курсор в конец текста
+            if (textareaRef.current) {
+              const length = textareaRef.current.value.length;
+              textareaRef.current.setSelectionRange(length, length);
+            }
+          }, 100);
+        } catch (error) {
+          // Если не удалось расшифровать, используем оригинальный контент
+          setContent(editingMessage.content);
+          setTimeout(() => {
+            textareaRef.current?.focus();
+            if (textareaRef.current) {
+              const length = textareaRef.current.value.length;
+              textareaRef.current.setSelectionRange(length, length);
+            }
+          }, 100);
+        }
+      };
+      decryptAndSetContent();
+    } else {
+      setContent('');
+    }
+  }, [editingMessage, sessionCrypto]);
+
+  // Все состояния и ref'ы должны быть объявлены ДО useEffect
   const [showPollDialog, setShowPollDialog] = useState(false);
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState(['', '']);
@@ -33,18 +74,26 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [showAttachDialog, setShowAttachDialog] = useState(false);
   const [showEmojiMenu, setShowEmojiMenu] = useState(false);
+  const [emojiPickerPosition, setEmojiPickerPosition] = useState({ x: 0, y: 0 });
+  const [showMentionSuggestions, setShowMentionSuggestions] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [mentionSuggestions, setMentionSuggestions] = useState<User[]>([]);
+  const [mentionPosition, setMentionPosition] = useState({ start: 0, end: 0 });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const emojiButtonRef = useRef<HTMLButtonElement>(null);
 
   // Состояния для записи аудио
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
   const [audioRecordingTime, setAudioRecordingTime] = useState(0);
   const audioRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const audioTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isAudioCancelledRef = useRef<boolean>(false);
 
-  // Состояния для записи видео
+  // Состояния для записи видео - ДОЛЖНЫ быть ДО useEffect, который их использует
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
   const [videoRecordingTime, setVideoRecordingTime] = useState(0);
   const [showVideoDialog, setShowVideoDialog] = useState(false);
@@ -54,18 +103,73 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
   const videoTimerRef = useRef<NodeJS.Timeout | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const isVideoCancelledRef = useRef<boolean>(false);
+
+  // Обновляем превью видео когда диалог открывается и поток готов
+  useEffect(() => {
+    if (showVideoDialog && streamRef.current) {
+      // Небольшая задержка для того, чтобы video элемент успел отрендериться в DOM
+      const timer = setTimeout(() => {
+        if (videoRef.current && streamRef.current) {
+          console.log('Setting video srcObject for preview in useEffect');
+          try {
+            videoRef.current.srcObject = streamRef.current;
+            // Убеждаемся, что видео воспроизводится
+            const playPromise = videoRef.current.play();
+            if (playPromise !== undefined) {
+              playPromise.catch((err) => {
+                console.error('Error playing video preview:', err);
+              });
+            }
+          } catch (err) {
+            console.error('Error setting video srcObject:', err);
+          }
+        } else {
+          console.warn('videoRef or streamRef is null in useEffect');
+        }
+      }, 200);
+      
+      return () => clearTimeout(timer);
+    } else if (!showVideoDialog && videoRef.current) {
+      // Очищаем поток когда диалог закрывается
+      videoRef.current.srcObject = null;
+    }
+  }, [showVideoDialog]);
 
   const handleSend = () => {
     if (!content.trim() || disabled) return;
 
-    onSend(content, 'text', replyingTo?.id);
+    // Если редактируем сообщение, передаем его ID
+    const editingMessageId = editingMessage?.id;
+    onSend(content, 'text', replyingTo?.id, editingMessageId);
     setContent('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
+    // Отменяем редактирование после отправки
+    if (onCancelEdit) {
+      onCancelEdit();
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Если открыты подсказки меншенов, обрабатываем навигацию
+    if (showMentionSuggestions && mentionSuggestions.length > 0) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter') {
+        e.preventDefault();
+        // TODO: Реализовать навигацию по подсказкам
+        if (e.key === 'Enter') {
+          // Выбираем первую подсказку
+          handleSelectMention(mentionSuggestions[0]);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        setShowMentionSuggestions(false);
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -73,13 +177,82 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
   };
 
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setContent(e.target.value);
+    const newContent = e.target.value;
+    setContent(newContent);
     
     // Автоматическое изменение высоты
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
+
+    // Поиск меншенов при вводе @
+    const cursorPosition = textareaRef.current?.selectionStart || 0;
+    const textBeforeCursor = newContent.substring(0, cursorPosition);
+    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
+    
+    if (lastAtIndex !== -1) {
+      // Проверяем, что после @ нет пробела (значит это начало меншена)
+      const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
+      if (!textAfterAt.includes(' ') && !textAfterAt.includes('\n')) {
+        // Ищем совпадающих пользователей
+        const query = textAfterAt.toLowerCase();
+        setMentionQuery(query);
+        setMentionPosition({ start: lastAtIndex, end: cursorPosition });
+        searchMentionUsers(query);
+        setShowMentionSuggestions(true);
+      } else {
+        setShowMentionSuggestions(false);
+      }
+    } else {
+      setShowMentionSuggestions(false);
+    }
+  };
+
+  const searchMentionUsers = async (query: string) => {
+    if (!query.trim()) {
+      setMentionSuggestions([]);
+      return;
+    }
+
+    try {
+      const data = await usersAPI.search(query);
+      // Фильтруем по query и сортируем по display_name или username
+      const filtered = (data.users || []).filter((user: User) => {
+        const username = user.username?.toLowerCase() || '';
+        const displayName = user.display_name?.toLowerCase() || '';
+        return username.includes(query) || displayName.includes(query);
+      });
+      setMentionSuggestions(filtered.slice(0, 10)); // Ограничиваем до 10 результатов
+    } catch (error) {
+      console.error('Ошибка поиска пользователей для меншена:', error);
+      setMentionSuggestions([]);
+    }
+  };
+
+  const handleSelectMention = (user: User) => {
+    if (!textareaRef.current) return;
+
+    // В сообщение всегда подставляем username (логин), а не display_name
+    const username = user.username || '';
+    const mentionText = `@${username} `;
+    
+    // Заменяем @query на @username
+    const beforeMention = content.substring(0, mentionPosition.start);
+    const afterMention = content.substring(mentionPosition.end);
+    const newContent = beforeMention + mentionText + afterMention;
+    
+    setContent(newContent);
+    setShowMentionSuggestions(false);
+    
+    // Устанавливаем курсор после меншена
+    setTimeout(() => {
+      if (textareaRef.current) {
+        const newCursorPos = beforeMention.length + mentionText.length;
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
+      }
+    }, 0);
   };
 
   const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -163,6 +336,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
   const startAudioRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
       const mediaRecorder = new MediaRecorder(stream);
       audioRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
@@ -174,6 +348,12 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
       };
 
       mediaRecorder.onstop = async () => {
+        // Если запись была отменена, не отправляем
+        if (isAudioCancelledRef.current) {
+          isAudioCancelledRef.current = false;
+          return;
+        }
+        
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         
         try {
@@ -194,12 +374,16 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
           toast.error(error.message || 'Ошибка загрузки аудио');
         } finally {
           // Останавливаем все треки
-          stream.getTracks().forEach(track => track.stop());
+          if (audioStreamRef.current) {
+            audioStreamRef.current.getTracks().forEach(track => track.stop());
+            audioStreamRef.current = null;
+          }
           
           // Сбрасываем таймер
           setAudioRecordingTime(0);
           if (audioTimerRef.current) {
             clearInterval(audioTimerRef.current);
+            audioTimerRef.current = null;
           }
         }
       };
@@ -260,14 +444,26 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
   };
 
   const cancelAudioRecording = () => {
+    // Устанавливаем флаг отмены
+    isAudioCancelledRef.current = true;
+    
     if (audioRecorderRef.current && isRecordingAudio) {
       audioRecorderRef.current.stop();
-      setIsRecordingAudio(false);
-      audioChunksRef.current = [];
-      setAudioRecordingTime(0);
-      if (audioTimerRef.current) {
-        clearInterval(audioTimerRef.current);
-      }
+      audioRecorderRef.current = null;
+    }
+    
+    // Останавливаем все треки медиа-потока
+    if (audioStreamRef.current) {
+      audioStreamRef.current.getTracks().forEach(track => track.stop());
+      audioStreamRef.current = null;
+    }
+    
+    setIsRecordingAudio(false);
+    audioChunksRef.current = [];
+    setAudioRecordingTime(0);
+    if (audioTimerRef.current) {
+      clearInterval(audioTimerRef.current);
+      audioTimerRef.current = null;
     }
   };
 
@@ -281,8 +477,21 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
       
       streamRef.current = stream;
       
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
+      // Открываем диалог ПЕРЕД установкой потока, чтобы video элемент был в DOM
+      setShowVideoDialog(true);
+      
+      // Небольшая задержка для того, чтобы диалог успел отрендериться
+      // useEffect также установит поток, но здесь делаем дополнительную установку для надежности
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // Устанавливаем поток в video элемент для превью в реальном времени
+      if (videoRef.current && streamRef.current) {
+        console.log('Setting video srcObject in startVideoRecording');
+        videoRef.current.srcObject = streamRef.current;
+        // Убеждаемся, что видео воспроизводится
+        videoRef.current.play().catch((err) => {
+          console.error('Error playing video preview:', err);
+        });
       }
 
       const mediaRecorder = new MediaRecorder(stream);
@@ -296,6 +505,12 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
       };
 
       mediaRecorder.onstop = async () => {
+        // Если запись была отменена, не отправляем
+        if (isVideoCancelledRef.current) {
+          isVideoCancelledRef.current = false;
+          return;
+        }
+        
         const videoBlob = new Blob(videoChunksRef.current, { type: 'video/webm' });
         
         try {
@@ -329,7 +544,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
         }
       };
 
-      setShowVideoDialog(true);
+      // Диалог уже открыт выше, просто запускаем запись
       setShowAttachMenu(false);
       setShowAttachDialog(false);
       setIsRecordingVideo(true);
@@ -394,20 +609,32 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
   };
 
   const cancelVideoRecording = () => {
+    // Устанавливаем флаг отмены
+    isVideoCancelledRef.current = true;
+    
     if (videoRecorderRef.current && isRecordingVideo) {
       videoRecorderRef.current.stop();
-      setIsRecordingVideo(false);
-      videoChunksRef.current = [];
+      videoRecorderRef.current = null;
     }
     
+    // Останавливаем все треки медиа-потока
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
     }
     
+    // Останавливаем видео элемент
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    
+    setIsRecordingVideo(false);
+    videoChunksRef.current = [];
     setShowVideoDialog(false);
     setVideoRecordingTime(0);
     if (videoTimerRef.current) {
       clearInterval(videoTimerRef.current);
+      videoTimerRef.current = null;
     }
   };
 
@@ -474,12 +701,15 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
   };
 
   const handleAddEmoji = (emoji: any) => {
-    const native = emoji.native || emoji.shortcodes || '';
+    // Поддержка как объекта emoji-mart, так и строки
+    const native = typeof emoji === 'string' ? emoji : (emoji.native || emoji.shortcodes || '');
     if (!native) return;
     setContent((prev) => prev + native);
     setShowEmojiMenu(false);
     textareaRef.current?.focus();
   };
+
+  // Вычисляем позицию emoji picker при открытии - убрано, позиция устанавливается в onClick
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -569,50 +799,43 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
         </div>
       )}
 
-      {/* Индикатор записи аудио */}
+      {/* Индикатор записи аудио - Telegram стиль */}
       {isRecordingAudio && (
-        <div className="mb-3 flex items-center gap-3 bg-red-50 dark:bg-red-950 rounded-lg px-4 py-3 border border-red-200 dark:border-red-800">
-          <div className="flex items-center gap-2 flex-1">
-            <Circle className="w-3 h-3 fill-red-500 text-red-500 animate-pulse" />
-            <span className="text-sm">Запись голосового сообщения...</span>
-            <span className="text-sm font-mono">{formatTime(audioRecordingTime)}</span>
+        <div className="mb-3 flex items-center gap-3 bg-primary/10 dark:bg-primary/20 rounded-2xl px-4 py-3 border-2 border-primary/30">
+          <div className="flex items-center gap-3 flex-1">
+            <div className="relative">
+              <Circle className="w-4 h-4 fill-red-500 text-red-500 animate-pulse" />
+              <div className="absolute inset-0 w-4 h-4 border-2 border-red-500 rounded-full animate-ping" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-foreground">Запись голосового сообщения</span>
+                <span className="text-sm font-mono text-muted-foreground">{formatTime(audioRecordingTime)}</span>
+              </div>
+            </div>
           </div>
           <div className="flex gap-2">
-            <Button variant="ghost" size="sm" onClick={cancelAudioRecording}>
-              Отмена
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={cancelAudioRecording}
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+            >
+              <X className="w-4 h-4" />
             </Button>
-            <Button variant="default" size="sm" onClick={stopAudioRecording}>
-              Отправить
+            <Button 
+              variant="default" 
+              size="sm" 
+              onClick={stopAudioRecording}
+              className="bg-primary hover:bg-primary/90"
+            >
+              <Send className="w-4 h-4" />
             </Button>
           </div>
         </div>
       )}
 
       <div className="flex gap-2 items-end">
-        {/* Единая кнопка скрепки с меню */}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setShowAttachDialog(true)}
-          disabled={disabled || isRecordingAudio || isRecordingVideo}
-          title="Прикрепить"
-          className="shrink-0"
-        >
-          <Paperclip className="w-5 h-5" />
-        </Button>
-
-        {/* Кнопка эмодзи (emoji-mart) */}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setShowEmojiMenu((v) => !v)}
-          disabled={disabled || isRecordingAudio || isRecordingVideo}
-          title="Эмодзи"
-          className="shrink-0"
-        >
-          <Smile className="w-5 h-5" />
-        </Button>
-
         {/* Скрытые inputs для файлов */}
         <input
           ref={fileInputRef}
@@ -630,44 +853,125 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
           capture="environment"
         />
 
-        {/* Поле ввода */}
-        <div className="flex-1 relative">
+        {/* Поле ввода в стиле Telegram - улучшенный дизайн */}
+        <div className="flex-1 relative flex items-end bg-muted/50 backdrop-blur-sm rounded-3xl border border-border/40 shadow-sm hover:border-border/60 focus-within:border-primary/50 focus-within:shadow-md transition-all duration-300">
+          {/* Кнопка скрепки слева внутри поля */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setShowAttachDialog(true)}
+            disabled={disabled || isRecordingAudio || isRecordingVideo}
+            title="Прикрепить"
+            className="shrink-0 h-11 w-11 rounded-l-3xl hover:bg-muted/80 transition-colors"
+          >
+            <Paperclip className="w-5 h-5" />
+          </Button>
+
+          {/* Поле ввода текста */}
           <Textarea
             ref={textareaRef}
             value={content}
             onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder={disabled ? "Вы не можете отправлять сообщения" : "Введите сообщение или вставьте изображение"}
+            placeholder={disabled ? "Вы не можете отправлять сообщения" : "Сообщение..."}
             disabled={disabled || isRecordingAudio}
-            className="min-h-[44px] max-h-[200px] resize-none pr-12"
+            className="flex-1 min-h-[44px] max-h-[200px] resize-none px-3 py-2.5 border-0 bg-transparent focus:ring-0 focus-visible:ring-0 text-base placeholder:text-muted-foreground/60"
             rows={1}
           />
-        </div>
 
-        {/* Кнопка отправки */}
-        <Button
-          onClick={handleSend}
-          disabled={!content.trim() || disabled || isRecordingAudio}
-          size="icon"
-          className="shrink-0 h-14 w-14"
-        >
-          <Send className="w-6 h-6" />
-        </Button>
+          {/* Кнопка эмодзи справа внутри поля */}
+          <Button
+            ref={emojiButtonRef}
+            variant="ghost"
+            size="icon"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (emojiButtonRef.current) {
+                const rect = emojiButtonRef.current.getBoundingClientRect();
+                // Передаем правый нижний угол кнопки
+                setEmojiPickerPosition({
+                  x: rect.right,
+                  y: rect.bottom
+                });
+              }
+              setShowEmojiMenu((v) => !v);
+            }}
+            disabled={disabled || isRecordingAudio || isRecordingVideo}
+            title="Эмодзи"
+            className="shrink-0 h-11 w-11 hover:bg-muted/80 transition-colors"
+          >
+            <Smile className="w-5 h-5" />
+          </Button>
+
+          {/* Кнопка отправки справа внутри поля (если есть текст) или кнопка микрофона */}
+          {content.trim() ? (
+            <Button
+              onClick={handleSend}
+              disabled={disabled || isRecordingAudio}
+              size="icon"
+              className="shrink-0 h-11 w-11 rounded-r-3xl bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm hover:shadow-md transition-all"
+            >
+              <Send className="w-5 h-5" />
+            </Button>
+          ) : (
+            <Button
+              onClick={startAudioRecording}
+              disabled={disabled || isRecordingVideo || isRecordingAudio}
+              size="icon"
+              className="shrink-0 h-11 w-11 rounded-r-3xl hover:bg-muted/80 transition-colors"
+              title="Голосовое сообщение"
+            >
+              <Mic className="w-5 h-5" />
+            </Button>
+          )}
+        </div>
       </div>
 
-      {/* Emoji-mart picker (открывается поверх, как в мессенджерах) */}
+      {/* Кастомное окно выбора эмодзи с эффектом стекла */}
       {showEmojiMenu && (
-        <div className="absolute bottom-24 left-4 z-50">
-          {/* @ts-ignore emoji-mart Picker */}
-          <Picker
-            data={data}
-            onEmojiSelect={handleAddEmoji}
-            theme="light"
-            locale="ru"
-            previewPosition="none"
-            skinTonePosition="none"
-          />
+        <CustomEmojiPicker
+          onEmojiSelect={(emoji) => {
+            handleAddEmoji(emoji);
+            setShowEmojiMenu(false);
+          }}
+          onClose={() => setShowEmojiMenu(false)}
+          position={emojiPickerPosition}
+        />
+      )}
+
+      {/* Подсказки меншенов */}
+      {showMentionSuggestions && mentionSuggestions.length > 0 && textareaRef.current && (
+        <div 
+          className="absolute bottom-full left-0 mb-2 w-64 max-h-64 overflow-y-auto bg-background/95 backdrop-blur-md border border-border/80 rounded-lg shadow-lg z-50"
+          style={{
+            bottom: `${textareaRef.current.offsetHeight + 8}px`
+          }}
+        >
+          {mentionSuggestions.map((user) => (
+            <div
+              key={user.id}
+              onClick={() => handleSelectMention(user)}
+              className="flex items-center gap-2 p-2 hover:bg-accent cursor-pointer transition-colors"
+            >
+              <Avatar className="h-8 w-8">
+                <AvatarImage src={fixMediaUrl(user.avatar_url || user.avatar)} />
+                <AvatarFallback>
+                  {(user.display_name || user.username || 'U').charAt(0).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">
+                  {user.display_name || user.username}
+                </p>
+                {user.display_name && (
+                  <p className="text-xs text-muted-foreground truncate">
+                    @{user.username}
+                  </p>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -744,19 +1048,23 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
             <DialogTitle>Запись видео сообщения</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            {/* Круговое превью видео */}
-            <div className="relative w-64 h-64 mx-auto">
+            {/* Превью видео - Telegram стиль */}
+            <div className="relative w-full aspect-square max-w-md mx-auto bg-black rounded-2xl overflow-hidden">
               <video
                 ref={videoRef}
                 autoPlay
                 muted
                 playsInline
-                className="w-full h-full object-cover rounded-full border-4 border-primary"
+                className="w-full h-full object-cover"
+                style={{ transform: facingMode === 'user' ? 'scaleX(-1)' : 'none' }} // Зеркальное отображение для фронтальной камеры
               />
               {isRecordingVideo && (
-                <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-500 text-white px-3 py-1 rounded-full flex items-center gap-2">
-                  <Circle className="w-2 h-2 fill-white animate-pulse" />
-                  <span className="text-sm font-mono">{formatTime(videoRecordingTime)}</span>
+                <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-sm text-white px-3 py-1.5 rounded-full flex items-center gap-2">
+                  <div className="relative">
+                    <Circle className="w-2 h-2 fill-red-500 text-red-500" />
+                    <div className="absolute inset-0 w-2 h-2 border border-red-500 rounded-full animate-ping" />
+                  </div>
+                  <span className="text-sm font-mono font-medium">{formatTime(videoRecordingTime)}</span>
                 </div>
               )}
               
@@ -764,7 +1072,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
               <Button
                 variant="secondary"
                 size="icon"
-                className="absolute bottom-4 right-4 rounded-full"
+                className="absolute bottom-4 right-4 rounded-full bg-black/60 backdrop-blur-sm hover:bg-black/80 text-white border-0"
                 onClick={switchCamera}
                 disabled={!isRecordingVideo}
               >
@@ -826,14 +1134,6 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled }: Me
             >
               <Paperclip className="w-8 h-8" />
               <span className="text-sm">Прикрепить файл</span>
-            </Button>
-            <Button
-              variant="outline"
-              className="h-24 flex-col gap-2"
-              onClick={startAudioRecording}
-            >
-              <Mic className="w-8 h-8" />
-              <span className="text-sm">Голосовое</span>
             </Button>
             <Button
               variant="outline"

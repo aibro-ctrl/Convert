@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { Message, messagesAPI, roomsAPI } from '../../utils/api';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { Message, messagesAPI, roomsAPI, usersAPI } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useSessionCrypto } from '../../contexts/SessionCryptoContext';
 import { decryptMessageContent, encryptMessageContent } from '../../utils/messageEncryption';
@@ -8,13 +8,15 @@ import { Badge } from '../ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { Input } from '../ui/input';
+import { Dialog, DialogContent } from '../ui/dialog';
 import { toast } from '../ui/sonner';
-import { Smile, Reply, Pin, Trash2, Edit, MoreHorizontal, Copy, Star, RefreshCw } from '../ui/icons';
+import { Smile, Reply, Pin, Trash2, Edit, MoreHorizontal, Copy, Star, RefreshCw, ArrowRight } from '../ui/icons';
 import { quickFix } from '../../utils/keyboardLayout';
 import { PollMessage } from './PollMessage';
 import { SimpleAudioPlayer } from './SimpleAudioPlayer';
 import { VideoPlayer } from './VideoPlayer';
 import { fixMediaUrl } from '../../utils/urlFix';
+import { CustomEmojiPicker } from './CustomEmojiPicker';
 
 interface MessageBubbleProps {
   message: Message;
@@ -25,6 +27,8 @@ interface MessageBubbleProps {
   isPinned: boolean;
   replyToMessage?: Message | null;
   onEdit?: () => void;
+  onForward?: (message: Message) => void;
+  onStartEdit?: (message: Message) => void;
 }
 
 export function MessageBubble({ 
@@ -35,7 +39,9 @@ export function MessageBubble({
   onUserClick,
   isPinned,
   replyToMessage,
-  onEdit
+  onEdit,
+  onForward,
+  onStartEdit
 }: MessageBubbleProps) {
   const { user } = useAuth();
   const sessionCrypto = useSessionCrypto();
@@ -44,6 +50,9 @@ export function MessageBubble({
   const [decryptedContent, setDecryptedContent] = useState<string>(message.content);
   const [editedContent, setEditedContent] = useState(message.content);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showAllEmojis, setShowAllEmojis] = useState(false);
+  const [showEmojiModal, setShowEmojiModal] = useState(false);
+  const [emojiModalPosition, setEmojiModalPosition] = useState({ x: 0, y: 0 });
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
   const longPressTimer = React.useRef<NodeJS.Timeout | null>(null);
   
@@ -78,15 +87,38 @@ export function MessageBubble({
   const isMentioned = message.mentions?.includes(user?.id || '');
 
   const handleReaction = async (emoji: string) => {
+    if (!user) return;
+    
     try {
-      await messagesAPI.addReaction(message.id, emoji);
+      // Проверяем, есть ли уже реакция от текущего пользователя
+      const currentReaction = message.reactions?.[emoji] || [];
+      const isCurrentUserReacted = currentReaction.includes(user.id);
+      
+      if (isCurrentUserReacted) {
+        // Убираем реакцию - как в Telegram, просто клик по уже поставленной реакции
+        console.log('Removing reaction:', emoji, 'from message:', message.id);
+        const result = await messagesAPI.removeReaction(message.id, emoji);
+        console.log('Reaction removed successfully:', result);
+      } else {
+        // Добавляем реакцию
+        console.log('Adding reaction:', emoji, 'to message:', message.id);
+        const result = await messagesAPI.addReaction(message.id, emoji);
+        console.log('Reaction added successfully:', result);
+      }
+      
       setShowEmojiPicker(false);
-      // Немедленно обновляем сообщения
+      // Немедленно обновляем сообщения - увеличиваем задержку для надежности
       if (onEdit) {
-        setTimeout(() => onEdit(), 300);
+        setTimeout(() => {
+          onEdit();
+        }, 500);
       }
     } catch (error: any) {
-      console.error('Ошибка добавления реакции:', error);
+      console.error('Ошибка добавления/удаления реакции:', error);
+      // Не показываем ошибку для 404 - это нормально, если реакция уже удалена
+      if (!error.message?.includes('404') && !error.message?.includes('не найдена')) {
+        toast.error(error.message || 'Не удалось изменить реакцию');
+      }
     }
   };
 
@@ -189,72 +221,101 @@ export function MessageBubble({
     }
   };
 
-  // Обработчики long press
+  // Обработчики long press - только на самом сообщении
   const handleTouchStart = (e: React.TouchEvent) => {
+    // Останавливаем всплытие, чтобы не вызывать меню на других элементах
+    e.stopPropagation();
+    const target = e.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
     longPressTimer.current = setTimeout(() => {
       const touch = e.touches[0];
-      const safePos = getSafeMenuPosition(touch.clientX, touch.clientY);
+      const safePos = getSafeMenuPosition(touch.clientX, touch.clientY, rect);
       setMenuPosition(safePos);
       setShowEmojiPicker(true);
     }, 500);
   };
 
-  const handleTouchEnd = () => {
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    e.stopPropagation();
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current);
     }
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    // Останавливаем всплытие, чтобы не вызывать меню на других элементах
+    e.stopPropagation();
     if (e.button === 0) { // Левая кнопка мыши
+      const target = e.currentTarget as HTMLElement;
+      const rect = target.getBoundingClientRect();
       longPressTimer.current = setTimeout(() => {
-        const safePos = getSafeMenuPosition(e.clientX, e.clientY);
+        const safePos = getSafeMenuPosition(e.clientX, e.clientY, rect);
         setMenuPosition(safePos);
         setShowEmojiPicker(true);
       }, 500);
     }
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e: React.MouseEvent) => {
+    e.stopPropagation();
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current);
     }
   };
 
-  // Функция для безопасного позиционирования меню
-  const getSafeMenuPosition = (x: number, y: number) => {
-    const menuWidth = 224; // w-56 = 14rem = 224px
-    const menuHeight = 300; // примерная высота меню
+  // Функция для безопасного позиционирования меню - всегда в поле видимости чата
+  const getSafeMenuPosition = (x: number, y: number, elementRect?: DOMRect) => {
+    const menuWidth = 256; // w-64 = 16rem = 256px
+    const menuHeight = 400; // примерная высота меню
     const padding = 16; // отступ от края экрана
+    const chatContainer = document.querySelector('[class*="flex-1"]') || document.body;
+    const containerRect = chatContainer.getBoundingClientRect();
 
     let safeX = x;
     let safeY = y;
 
-    // Проверяем правую границу
-    if (safeX + menuWidth / 2 > window.innerWidth - padding) {
-      safeX = window.innerWidth - menuWidth / 2 - padding;
-    }
-    // Проверяем левую границу
-    if (safeX - menuWidth / 2 < padding) {
-      safeX = menuWidth / 2 + padding;
+    // Если меню должно открываться вверх (над точкой клика)
+    const openUp = y - menuHeight > containerRect.top + padding;
+    
+    if (openUp) {
+      // Открываем вверх
+      safeY = y;
+      // Проверяем верхнюю границу контейнера
+      if (safeY - menuHeight < containerRect.top + padding) {
+        safeY = containerRect.top + menuHeight + padding;
+      }
+    } else {
+      // Открываем вниз
+      safeY = y + 20; // Небольшой отступ от точки клика
+      // Проверяем нижнюю границу контейнера
+      if (safeY + menuHeight > containerRect.bottom - padding) {
+        safeY = containerRect.bottom - menuHeight - padding;
+        // Если не помещается вниз, открываем вверх
+        if (safeY < containerRect.top + padding) {
+          safeY = y - 20;
+        }
+      }
     }
 
-    // Проверяем верхнюю границу
-    if (safeY - menuHeight < padding) {
-      safeY = menuHeight + padding;
+    // Проверяем правую границу контейнера
+    if (safeX + menuWidth / 2 > containerRect.right - padding) {
+      safeX = containerRect.right - menuWidth / 2 - padding;
     }
-    // Проверяем нижнюю границу
-    if (safeY > window.innerHeight - padding) {
-      safeY = window.innerHeight - padding;
+    // Проверяем левую границу контейнера
+    if (safeX - menuWidth / 2 < containerRect.left + padding) {
+      safeX = containerRect.left + menuWidth / 2 + padding;
     }
 
     return { x: safeX, y: safeY };
   };
 
-  // Обработчик правого клика
+  // Обработчик правого клика - только на самом сообщении
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
-    const safePos = getSafeMenuPosition(e.clientX, e.clientY);
+    e.stopPropagation();
+    const target = e.currentTarget as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    const safePos = getSafeMenuPosition(e.clientX, e.clientY, rect);
     setMenuPosition(safePos);
     setShowEmojiPicker(true);
   };
@@ -374,7 +435,7 @@ export function MessageBubble({
         return (
           <span 
             key={index} 
-            className={`${isCurrentUser ? 'bg-yellow-200 dark:bg-yellow-900 px-1 rounded font-semibold' : 'text-blue-500 font-semibold'}`}
+            className={`${isCurrentUser ? 'bg-yellow-200 dark:bg-yellow-900 px-1 rounded font-semibold' : 'text-yellow-500 dark:text-yellow-400 font-semibold'}`}
           >
             {part}
           </span>
@@ -384,7 +445,8 @@ export function MessageBubble({
     });
   };
 
-  const quickEmojis = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+  // Расширенный список эмодзи для реакций (как в Telegram)
+  const quickEmojis = ['👍', '❤️', '😂', '😮', '😢', '🔥', '👏', '🙏', '🤔', '😍', '🤯', '😱', '😴', '🤮', '💯', '🎉', '🤝', '👎'];
 
   // Сообщение состоит только из эмодзи (для красивого отображения)
   const isEmojiOnly = useMemo(() => {
@@ -401,7 +463,55 @@ export function MessageBubble({
     return true;
   }, [decryptedContent]);
 
-  const [reactionDetails, setReactionDetails] = useState<{ emoji: string; userIds: string[] } | null>(null);
+  const [reactionDetails, setReactionDetails] = useState<{ emoji: string; userIds: string[]; position?: { x: number; y: number } } | null>(null);
+  const [reactionUsers, setReactionUsers] = useState<Array<{ id: string; username: string; display_name?: string }>>([]);
+  const messageBubbleRef = useRef<HTMLDivElement>(null);
+
+  // Загружаем информацию о пользователях при открытии reactionDetails
+  useEffect(() => {
+    if (reactionDetails && reactionDetails.userIds.length > 0) {
+      const loadUsers = async () => {
+        try {
+          const users = await Promise.all(
+            reactionDetails.userIds.map(async (userId) => {
+              try {
+                const response = await usersAPI.getById(userId);
+                // API возвращает { user: {...} }
+                const user = response.user || response;
+                if (!user || !user.username) {
+                  console.warn('User data incomplete for userId:', userId, response);
+                  return {
+                    id: userId,
+                    username: 'Неизвестный',
+                    display_name: undefined,
+                  };
+                }
+                return {
+                  id: userId,
+                  username: user.username,
+                  display_name: user.display_name,
+                };
+              } catch (error: any) {
+                console.error('Error loading user:', userId, error);
+                return {
+                  id: userId,
+                  username: 'Неизвестный',
+                  display_name: undefined,
+                };
+              }
+            })
+          );
+          setReactionUsers(users.filter(u => u.username !== 'Неизвестный' || u.id === user?.id));
+        } catch (error) {
+          console.error('Ошибка загрузки пользователей:', error);
+          setReactionUsers([]);
+        }
+      };
+      loadUsers();
+    } else {
+      setReactionUsers([]);
+    }
+  }, [reactionDetails, user?.id]);
 
   // Мемоизированные значения для оптимизации
   const displayName = useMemo(() => {
@@ -419,11 +529,6 @@ export function MessageBubble({
     >
       <div 
         className={`flex gap-2 max-w-[75%] ${isOwnMessage ? 'flex-row-reverse' : 'flex-row'} relative`}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onContextMenu={handleContextMenu}
       >
         {/* Avatar - показываем для всех сообщений */}
         <Avatar 
@@ -475,8 +580,9 @@ export function MessageBubble({
             </div>
           )}
 
-          {/* Message bubble */}
+          {/* Message bubble - обработчики long press только здесь */}
           <div
+            ref={messageBubbleRef}
             className={`relative overflow-hidden ${
               message.type === 'video' ? 'p-0 rounded-2xl' : 'rounded-2xl px-4 py-2'
             } ${
@@ -490,9 +596,14 @@ export function MessageBubble({
             } transition-transform duration-200 ease-out group-hover:-translate-y-0.5`}
             style={
               message.type !== 'video' && isOwnMessage
-                ? { backgroundColor: '#1d9bf0', color: '#ffffff' }
+                ? { backgroundColor: 'var(--primary)', color: '#000000' }
                 : undefined
             }
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+            onMouseDown={handleMouseDown}
+            onMouseUp={handleMouseUp}
+            onContextMenu={handleContextMenu}
           >
             {isPinned && (
               <div className="flex items-center gap-1 text-xs mb-1 opacity-70">
@@ -538,10 +649,7 @@ export function MessageBubble({
                     }}
                   />
                 ) : message.type === 'voice' ? (
-                  <div className="space-y-2">
-                    <p className="text-sm opacity-70">🎤 Голосовое сообщение</p>
-                    <SimpleAudioPlayer src={fixMediaUrl(message.content)} />
-                  </div>
+                  <SimpleAudioPlayer src={fixMediaUrl(message.content)} />
                 ) : message.type === 'video' ? (
                   <div className="space-y-2">
                     <p className="text-sm opacity-70">🎥 Видео</p>
@@ -556,7 +664,7 @@ export function MessageBubble({
                     {renderContent(decryptedContent)}
                   </div>
                 )}
-                <div className="text-[11px] mt-1 text-foreground/80">
+                <div className="text-[6px] mt-1 text-foreground/60">
                   {new Date(message.created_at).toLocaleTimeString('ru-RU', {
                     hour: '2-digit',
                     minute: '2-digit',
@@ -573,50 +681,139 @@ export function MessageBubble({
               {Object.entries(message.reactions).map(([emoji, userIds]) => {
                 const isCurrentUserReacted = userIds.includes(user?.id || '');
                 return (
-                  <Badge
-                    key={emoji}
-                    variant="secondary"
-                    className={`text-xs cursor-pointer hover:bg-accent transition-transform duration-150 hover:scale-110 ${
-                      isCurrentUserReacted ? 'border border-primary/60 bg-primary/5' : ''
-                    } animate-reaction-pop`}
-                    onClick={() => handleReaction(emoji)}
-                    onMouseDown={(e) => {
-                      // Долгое нажатие для просмотра деталей реакции
-                      e.preventDefault();
-                      setReactionDetails({ emoji, userIds });
-                    }}
-                  >
-                    <span className="mr-1">{emoji}</span>
-                    <span>{userIds.length}</span>
-                  </Badge>
+                <Badge
+                  key={emoji}
+                  variant="secondary"
+                  className={`text-xs cursor-pointer hover:bg-accent transition-transform duration-150 hover:scale-110 ${
+                    isCurrentUserReacted ? 'border border-primary/60 bg-primary/5' : ''
+                  } animate-reaction-pop`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    handleReaction(emoji);
+                  }}
+                  onMouseDown={(e) => {
+                    // Удержание для просмотра деталей реакции (как в Telegram)
+                    // Используем отдельный обработчик для long press, чтобы не мешать onClick
+                    e.stopPropagation();
+                    let longPressTimer: NodeJS.Timeout | null = null;
+                    
+                    longPressTimer = setTimeout(() => {
+                      // Вычисляем позицию около сообщения
+                      const rect = messageBubbleRef.current?.getBoundingClientRect();
+                      const position = rect ? {
+                        x: rect.left + rect.width / 2,
+                        y: rect.top - 10
+                      } : undefined;
+                      setReactionDetails({ emoji, userIds, position });
+                    }, 500);
+                    
+                    const handleMouseUp = (upEvent: MouseEvent) => {
+                      if (longPressTimer) {
+                        clearTimeout(longPressTimer);
+                        longPressTimer = null;
+                      }
+                      if (e.currentTarget) {
+                        e.currentTarget.removeEventListener('mouseup', handleMouseUp);
+                        e.currentTarget.removeEventListener('mouseleave', handleMouseUp);
+                      }
+                    };
+                    
+                    if (e.currentTarget) {
+                      e.currentTarget.addEventListener('mouseup', handleMouseUp);
+                      e.currentTarget.addEventListener('mouseleave', handleMouseUp);
+                    }
+                  }}
+                  onTouchStart={(e) => {
+                    // Удержание на touch для просмотра деталей реакции
+                    let longPressTimer: NodeJS.Timeout | null = null;
+                    
+                    longPressTimer = setTimeout(() => {
+                      // Вычисляем позицию около сообщения
+                      const rect = messageBubbleRef.current?.getBoundingClientRect();
+                      const position = rect ? {
+                        x: rect.left + rect.width / 2,
+                        y: rect.top - 10
+                      } : undefined;
+                      setReactionDetails({ emoji, userIds, position });
+                    }, 500);
+                    
+                    const cleanup = () => {
+                      if (longPressTimer) {
+                        clearTimeout(longPressTimer);
+                        longPressTimer = null;
+                      }
+                    };
+                    
+                    const handleTouchEnd = () => {
+                      cleanup();
+                      if (e.currentTarget) {
+                        e.currentTarget.removeEventListener('touchend', handleTouchEnd);
+                        e.currentTarget.removeEventListener('touchcancel', handleTouchEnd);
+                      }
+                    };
+                    
+                    if (e.currentTarget) {
+                      e.currentTarget.addEventListener('touchend', handleTouchEnd);
+                      e.currentTarget.addEventListener('touchcancel', handleTouchEnd);
+                    }
+                  }}
+                >
+                  <span className="mr-1">{emoji}</span>
+                  <span>{userIds.length}</span>
+                </Badge>
                 );
               })}
             </div>
           )}
 
-          {/* Reaction details (кто поставил) */}
+          {/* Reaction details (кто поставил) - список пользователей - поверх сообщений с эффектом стекла */}
           {reactionDetails && (
-            <div className="mt-1 px-2 py-1 rounded-lg bg-background/90 border border-border text-xs text-muted-foreground shadow-sm">
-              <span className="font-medium mr-1">Реакция {reactionDetails.emoji}:</span>
-              {(() => {
-                const { userIds } = reactionDetails;
-                const you = userIds.includes(user?.id || '');
-                const othersCount = you ? userIds.length - 1 : userIds.length;
-                if (you && othersCount > 0) {
-                  return <>Вы и ещё {othersCount}</>;
-                }
-                if (you && othersCount === 0) {
-                  return <>Только вы</>;
-                }
-                return <>Пользователей: {userIds.length}</>;
-              })()}
-              <button
-                className="ml-2 text-[10px] uppercase tracking-wide text-primary hover:underline"
+            <>
+              {/* Backdrop для закрытия при клике в любом месте */}
+              <div 
+                className="fixed inset-0 z-[60]" 
                 onClick={() => setReactionDetails(null)}
+              />
+              <div 
+                className="fixed z-[70] px-3 py-2 rounded-xl bg-background/98 backdrop-blur-md border border-border/60 shadow-2xl text-xs max-w-xs"
+                style={{
+                  top: reactionDetails.position ? `${Math.max(10, reactionDetails.position.y - 10)}px` : '50%',
+                  left: reactionDetails.position ? `${reactionDetails.position.x}px` : '50%',
+                  transform: reactionDetails.position ? 'translate(-50%, -100%)' : 'translate(-50%, -50%)',
+                  maxHeight: '60vh',
+                  marginBottom: reactionDetails.position ? '8px' : '0'
+                }}
               >
-                скрыть
-              </button>
-            </div>
+                <div className="flex items-center justify-center mb-2">
+                  <span className="font-semibold text-foreground">
+                    {reactionDetails.emoji} {reactionDetails.userIds.length}
+                  </span>
+                </div>
+                <div className="space-y-1 max-h-[50vh] overflow-y-auto">
+                  {reactionUsers.length > 0 ? (
+                    reactionUsers.map((u) => (
+                      <div 
+                        key={u.id} 
+                        className="flex items-center gap-2 py-1 px-2 rounded-md hover:bg-accent/50 transition-colors"
+                      >
+                        <span className="text-foreground">
+                          {u.id === user?.id ? (
+                            <span className="font-semibold text-primary">Вы</span>
+                          ) : (
+                            <span>{u.display_name || u.username || `ID: ${u.id.substring(0, 8)}...`}</span>
+                          )}
+                        </span>
+                      </div>
+                    ))
+                  ) : reactionDetails.userIds.length > 0 ? (
+                    <div className="text-muted-foreground py-2 text-center">Загрузка пользователей...</div>
+                  ) : (
+                    <div className="text-muted-foreground py-2 text-center">Нет пользователей</div>
+                  )}
+                </div>
+              </div>
+            </>
           )}
 
           {/* Actions menu - Context menu style */}
@@ -628,27 +825,34 @@ export function MessageBubble({
                 onClick={() => setShowEmojiPicker(false)}
               />
               
-              {/* Context Menu */}
+              {/* Context Menu - эффект стекла, всегда в поле видимости */}
               <div 
-                className="fixed z-50 w-64 p-3 bg-background/95 border border-border/80 rounded-2xl shadow-xl animate-context-menu-pop"
+                className="fixed z-50 w-64 p-3 bg-background/98 backdrop-blur-md border border-border/60 rounded-2xl shadow-2xl animate-context-menu-pop"
                 style={{
                   top: `${menuPosition.y}px`,
                   left: `${menuPosition.x}px`,
-                  transform: 'translate(-50%, -100%) translateY(-8px)'
+                  transform: menuPosition.y > window.innerHeight / 2 
+                    ? 'translate(-50%, -100%) translateY(-8px)' 
+                    : 'translate(-50%, 0) translateY(8px)',
+                  boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+                  maxHeight: '80vh',
+                  overflowY: 'auto'
                 }}
               >
                 <div className="space-y-1">
                   <div className="space-y-1">
-                    {/* Emoji Reactions */}
+                    {/* Emoji Reactions - горизонтально в 3 строки */}
                     <div className="border-b pb-2 mb-2">
-                      <p className="text-xs text-muted-foreground mb-2 px-2">Реакции</p>
-                      <div className="grid grid-cols-6 gap-1">
+                      <div className="flex items-center justify-between mb-2 px-2">
+                        <p className="text-xs text-muted-foreground">Реакции</p>
+                      </div>
+                      <div className="grid grid-cols-6 gap-1.5">
                         {quickEmojis.map((emoji) => (
                           <Button
                             key={emoji}
                             variant="ghost"
                             size="sm"
-                            className="h-8 w-8 p-0 hover:bg-accent text-xl transition-transform duration-150 hover:scale-125 active:scale-100 animate-reaction-pop"
+                            className="h-9 w-9 p-0 hover:bg-accent/80 text-xl transition-transform duration-150 hover:scale-125 active:scale-100 animate-reaction-pop rounded-lg"
                             onClick={() => handleReaction(emoji)}
                           >
                             {emoji}
@@ -681,6 +885,23 @@ export function MessageBubble({
                       Копировать
                     </Button>
 
+                    {onForward && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full justify-start h-8"
+                        onClick={() => {
+                          if (onForward) {
+                            onForward(message);
+                          }
+                          setShowEmojiPicker(false);
+                        }}
+                      >
+                        <ArrowRight className="w-4 h-4 mr-2" />
+                        Переслать
+                      </Button>
+                    )}
+
                     <Button
                       variant="ghost"
                       size="sm"
@@ -710,7 +931,9 @@ export function MessageBubble({
                         size="sm"
                         className="w-full justify-start h-8"
                         onClick={() => {
-                          setIsEditing(true);
+                          if (onStartEdit) {
+                            onStartEdit(message);
+                          }
                           setShowEmojiPicker(false);
                         }}
                       >
@@ -753,8 +976,21 @@ export function MessageBubble({
               </div>
             </>
           )}
+
         </div>
       </div>
+
+      {/* Кастомное окно выбора эмодзи с эффектом стекла - вне вложенных div для правильного позиционирования */}
+      {showEmojiModal && (
+        <CustomEmojiPicker
+          onEmojiSelect={(emoji) => {
+            handleReaction(emoji);
+            setShowEmojiModal(false);
+          }}
+          onClose={() => setShowEmojiModal(false)}
+          position={emojiModalPosition}
+        />
+      )}
     </div>
   );
 }

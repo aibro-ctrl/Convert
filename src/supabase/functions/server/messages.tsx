@@ -167,12 +167,18 @@ export async function sendMessage(
     }
 
     // Обработка упоминаний
+    // Поддерживаем упоминания по username и display_name (с пробелами и Unicode символами)
     const mentions: string[] = [];
-    const mentionRegex = /@(\w+)/g;
+    // Регулярное выражение для упоминаний: @username или @display name (с пробелами)
+    // Поддерживает Unicode символы, пробелы, но останавливается на знаках препинания
+    // Используем более точное выражение: @ за которым следуют буквы/цифры/пробелы/Unicode, но не знаки препинания
+    const mentionRegex = /@([^\s@.,!?;:()[\]{}'"]+[\w\s\u0400-\u04FF\u0500-\u052F\u2DE0-\u2DFF\uA640-\uA69F]*)/gu;
     let match;
     
     while ((match = mentionRegex.exec(content)) !== null) {
-      const mentionText = match[1];
+      const mentionText = match[1].trim(); // Убираем пробелы в начале и конце
+      
+      if (!mentionText) continue;
       
       if (mentionText === 'admin') {
         const allUsers = await kv.getByPrefix('user:');
@@ -183,13 +189,30 @@ export async function sendMessage(
         const mods = allUsers.filter((u: User) => u.role === 'moderator' && !u.deleted);
         mentions.push(...mods.map((u: User) => u.id));
       } else {
-        const userId = await kv.get(`username:${mentionText.toLowerCase()}`);
-        if (userId) {
-          // Проверяем, что пользователь не удален
-          const mentionedUser = await kv.get(`user:${userId}`) as User;
-          if (mentionedUser && !mentionedUser.deleted) {
-            mentions.push(userId as string);
-          }
+        // Ищем по username или display_name (точное совпадение имеет приоритет)
+        const allUsers = await kv.getByPrefix('user:');
+        const query = mentionText.toLowerCase().trim();
+        
+        // Сначала ищем точное совпадение
+        let mentionedUser = allUsers.find((u: User) => {
+          if (u.deleted) return false;
+          const username = u.username?.toLowerCase().trim() || '';
+          const displayName = u.display_name?.toLowerCase().trim() || '';
+          return username === query || displayName === query;
+        });
+        
+        // Если точного совпадения нет, ищем частичное
+        if (!mentionedUser) {
+          mentionedUser = allUsers.find((u: User) => {
+            if (u.deleted) return false;
+            const username = u.username?.toLowerCase().trim() || '';
+            const displayName = u.display_name?.toLowerCase().trim() || '';
+            return username.includes(query) || displayName.includes(query);
+          });
+        }
+        
+        if (mentionedUser) {
+          mentions.push(mentionedUser.id);
         }
       }
     }
@@ -218,11 +241,19 @@ export async function sendMessage(
     (roomMessages as string[]).push(messageId);
     await kv.set(roomMessagesKey, roomMessages);
 
+    // Инициализируем счетчики, если их нет
+    if (!room.unread_mentions) {
+      room.unread_mentions = {};
+    }
+    if (!room.unread_reactions) {
+      room.unread_reactions = {};
+    }
+    if (!room.unread_count) {
+      room.unread_count = {};
+    }
+
     // Обновляем счетчики упоминаний в комнате
     if (mentions.length > 0) {
-      if (!room.unread_mentions) {
-        room.unread_mentions = {};
-      }
       mentions.forEach(mentionedUserId => {
         if (mentionedUserId !== userId) { // Не считаем упоминания себя
           room.unread_mentions![mentionedUserId] = (room.unread_mentions![mentionedUserId] || 0) + 1;
@@ -232,9 +263,6 @@ export async function sendMessage(
 
     // Обновляем счетчик непрочитанных сообщений для всех участников кроме отправителя
     try {
-      if (!room.unread_count) {
-        room.unread_count = {};
-      }
       room.members.forEach(memberId => {
         if (memberId !== userId) {
           room.unread_count![memberId] = (room.unread_count![memberId] || 0) + 1;
@@ -250,7 +278,9 @@ export async function sendMessage(
         type: message.type // Добавляем тип сообщения для правильного отображения в превью
       };
 
+      // Сохраняем комнату с обновленными счетчиками в базу
       await kv.set(`room:${roomId}`, room);
+      console.log(`Updated room ${roomId} counters: unread_mentions =`, room.unread_mentions, `unread_count =`, room.unread_count);
     } catch (roomUpdateError) {
       console.error('Error updating room counters:', roomUpdateError);
       // Не прерываем отправку сообщения, если не удалось обновить счетчики
@@ -341,6 +371,48 @@ export async function addReaction(messageId: string, userId: string, emoji: stri
   }
 }
 
+export async function removeReaction(messageId: string, userId: string, emoji: string) {
+  try {
+    const message = await kv.get(`message:${messageId}`) as Message;
+    if (!message) {
+      return { error: 'Сообщение не найдено' };
+    }
+
+    // Нельзя убирать реакцию с удаленных сообщений
+    if (message.deleted) {
+      return { error: 'Сообщение удалено' };
+    }
+
+    // Если реакций нет или этой конкретной реакции нет - возвращаем успех (уже удалена)
+    if (!message.reactions || !message.reactions[emoji]) {
+      return { data: message }; // Возвращаем сообщение как есть, реакция уже удалена
+    }
+    
+    // Проверяем, есть ли пользователь в списке реакций
+    if (!message.reactions[emoji].includes(userId)) {
+      return { data: message }; // Пользователь не ставил эту реакцию - возвращаем успех
+    }
+
+    // Удаляем пользователя из списка реакций
+    message.reactions[emoji] = message.reactions[emoji].filter(id => id !== userId);
+
+    // Если больше никто не поставил эту реакцию, удаляем её полностью
+    if (message.reactions[emoji].length === 0) {
+      delete message.reactions[emoji];
+    }
+
+    // Если реакций больше нет, удаляем объект reactions
+    if (Object.keys(message.reactions).length === 0) {
+      message.reactions = {};
+    }
+
+    await kv.set(`message:${messageId}`, message);
+    return { data: message };
+  } catch (err: any) {
+    return { error: `Ошибка удаления реакции: ${err.message}` };
+  }
+}
+
 export async function editMessage(messageId: string, userId: string, newContent: string) {
   try {
     const message = await kv.get(`message:${messageId}`) as Message;
@@ -360,11 +432,16 @@ export async function editMessage(messageId: string, userId: string, newContent:
 
     // Обновляем контент и упоминания
     const mentions: string[] = [];
-    const mentionRegex = /@(\w+)/g;
+    // Регулярное выражение для упоминаний: @username или @display name (с пробелами)
+    // Поддерживает Unicode символы, пробелы, но останавливается на знаках препинания
+    // Используем более точное выражение: @ за которым следуют буквы/цифры/пробелы/Unicode, но не знаки препинания
+    const mentionRegex = /@([^\s@.,!?;:()[\]{}'"]+[\w\s\u0400-\u04FF\u0500-\u052F\u2DE0-\u2DFF\uA640-\uA69F]*)/gu;
     let match;
     
     while ((match = mentionRegex.exec(newContent)) !== null) {
-      const mentionText = match[1];
+      const mentionText = match[1].trim(); // Убираем пробелы в начале и конце
+      
+      if (!mentionText) continue;
       
       if (mentionText === 'admin') {
         const allUsers = await kv.getByPrefix('user:');
@@ -375,13 +452,30 @@ export async function editMessage(messageId: string, userId: string, newContent:
         const mods = allUsers.filter((u: User) => u.role === 'moderator' && !u.deleted);
         mentions.push(...mods.map((u: User) => u.id));
       } else {
-        const userId = await kv.get(`username:${mentionText}`);
-        if (userId) {
-          // Проверяем, что пользователь не удален
-          const mentionedUser = await kv.get(`user:${userId}`) as User;
-          if (mentionedUser && !mentionedUser.deleted) {
-            mentions.push(userId as string);
-          }
+        // Ищем по username или display_name (точное совпадение имеет приоритет)
+        const allUsers = await kv.getByPrefix('user:');
+        const query = mentionText.toLowerCase().trim();
+        
+        // Сначала ищем точное совпадение
+        let mentionedUser = allUsers.find((u: User) => {
+          if (u.deleted) return false;
+          const username = u.username?.toLowerCase().trim() || '';
+          const displayName = u.display_name?.toLowerCase().trim() || '';
+          return username === query || displayName === query;
+        });
+        
+        // Если точного совпадения нет, ищем частичное
+        if (!mentionedUser) {
+          mentionedUser = allUsers.find((u: User) => {
+            if (u.deleted) return false;
+            const username = u.username?.toLowerCase().trim() || '';
+            const displayName = u.display_name?.toLowerCase().trim() || '';
+            return username.includes(query) || displayName.includes(query);
+          });
+        }
+        
+        if (mentionedUser) {
+          mentions.push(mentionedUser.id);
         }
       }
     }

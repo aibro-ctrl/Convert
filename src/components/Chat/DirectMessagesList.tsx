@@ -53,23 +53,7 @@ export function DirectMessagesList({ onSelectDM }: DirectMessagesListProps) {
           try {
             const originalContent = dm.last_message.content;
             
-            // Проверяем, является ли контент зашифрованным
-            let isEncrypted = false;
-            try {
-              const parsed = JSON.parse(originalContent);
-              isEncrypted = parsed && parsed.version && parsed.ciphertext;
-            } catch {
-              // Не JSON, значит незашифрованное сообщение
-              isEncrypted = false;
-            }
-
-            // Если не зашифровано, используем как есть
-            if (!isEncrypted) {
-              previewMap.set(dm.id, originalContent);
-              continue;
-            }
-
-            // Если зашифровано, пытаемся расшифровать
+            // Всегда пытаемся расшифровать - decryptMessageContent сам определит, нужно ли расшифровывать
             // Для DM room_id = dm.id, sender_id берем из last_message
             const messageForDecryption = {
               id: dm.last_message.id || '',
@@ -80,14 +64,14 @@ export function DirectMessagesList({ onSelectDM }: DirectMessagesListProps) {
               created_at: dm.last_message.created_at || new Date().toISOString(),
             } as any;
 
-            // Пытаемся расшифровать (decryptMessageContent автоматически использует базовое расшифрование если основное не готово)
+            // Пытаемся расшифровать (decryptMessageContent автоматически определит, зашифровано ли сообщение)
             const decrypted = await decryptMessageContent(
               originalContent,
               sessionCrypto,
               messageForDecryption
             );
             
-            // Используем расшифрованный контент (даже если это заглушка, decryptMessageContent вернет что-то разумное)
+            // Используем расшифрованный контент (или оригинал, если не зашифровано)
             previewMap.set(dm.id, decrypted);
           } catch (error) {
             console.error(`Failed to decrypt preview for DM ${dm.id}:`, error);

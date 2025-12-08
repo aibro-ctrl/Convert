@@ -34,7 +34,7 @@
             "react-resizable-panels": "^2.1.7",
             "recharts": "^2.15.2",
             "vaul": "^1.1.2",
-            "emoji-mart": "^5.5.2",
+            "@emoji-mart/react": "^1.1.1",
             "@emoji-mart/data": "^1.1.0"
       },
       "devDependencies": {

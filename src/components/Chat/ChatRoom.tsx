@@ -8,6 +8,7 @@ import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { MembersModal } from './MembersModal';
 import { RoomManagement } from './RoomManagement';
+import { ForwardMessagesDialog } from './ForwardMessagesDialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Badge } from '../ui/badge';
@@ -45,12 +46,31 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
   const [unreadMentions, setUnreadMentions] = useState(0);
   const [unreadReactions, setUnreadReactions] = useState(0);
   const [dmOtherUser, setDmOtherUser] = useState<User | null>(null);
+  const [selectedMessages, setSelectedMessages] = useState<Set<string>>(new Set());
+  const [showForwardDialog, setShowForwardDialog] = useState(false);
+  const [forwardingMessage, setForwardingMessage] = useState<Message | null>(null);
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
+  const [lastReadMessageId, setLastReadMessageId] = useState<string | null>(null);
+  const [showNewMessagesDivider, setShowNewMessagesDivider] = useState(false);
+
+  const handleForwardMessages = (message: Message) => {
+    setForwardingMessage(message);
+    setShowForwardDialog(true);
+  };
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const canModerate = user && ['admin', 'moderator'].includes(user.role);
   const isCreator = room.created_by === user?.id;
 
   useEffect(() => {
+    // Инициализируем счетчики меншенов и реакций из данных комнаты
+    if (user && room.unread_mentions) {
+      setUnreadMentions(room.unread_mentions[user.id] || 0);
+    }
+    if (user && room.unread_reactions) {
+      setUnreadReactions(room.unread_reactions[user.id] || 0);
+    }
+    
     loadMessages();
     updateUnreadCounts();
     
@@ -68,7 +88,7 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
       updateUnreadCounts();
     }, 3000); // Real-time: обновление каждые 3 секунды
     return () => clearInterval(interval);
-  }, [room.id]);
+  }, [room.id, room.unread_mentions, room.unread_reactions, user]);
 
   // Обновление счетчиков упоминаний и реакций
   const updateUnreadCounts = async () => {
@@ -94,11 +114,27 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
       const { scrollTop, scrollHeight, clientHeight } = container;
       const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
       setShowScrollButton(!isNearBottom);
+      
+      // Скрываем разделитель "Новые сообщения" при скролле вниз
+      if (showNewMessagesDivider && lastReadMessageId) {
+        const lastReadElement = document.getElementById(`message-${lastReadMessageId}`);
+        if (lastReadElement) {
+          const containerRect = container.getBoundingClientRect();
+          const messageRect = lastReadElement.getBoundingClientRect();
+          // Если последнее прочитанное сообщение прокручено выше видимой области, скрываем разделитель
+          if (messageRect.bottom < containerRect.top) {
+            setShowNewMessagesDivider(false);
+          }
+        } else {
+          // Если элемент не найден (возможно, отфильтрован), скрываем разделитель
+          setShowNewMessagesDivider(false);
+        }
+      }
     };
 
     container.addEventListener('scroll', handleScroll);
     return () => container.removeEventListener('scroll', handleScroll);
-  }, []);
+  }, [showNewMessagesDivider, lastReadMessageId]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -178,16 +214,32 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
     }
   };
 
-  const handleSendMessage = async (content: string, type: Message['type'], replyTo?: string) => {
+  const handleSendMessage = async (content: string, type: Message['type'], replyTo?: string, editingMessageId?: string) => {
     try {
+      // Если редактируем сообщение
+      if (editingMessageId) {
+        // Шифруем отредактированное сообщение
+        const encryptedContent = await encryptMessageContent(content, sessionCrypto);
+        await messagesAPI.edit(editingMessageId, encryptedContent);
+        setEditingMessage(null);
+        // Обновляем сообщения после редактирования
+        loadMessages();
+        return;
+      }
+
       // Шифрование (не блокируем отправку, если не готово - используется базовое шифрование)
       let encryptedContent: string;
 
-      // Шифруем сообщение перед отправкой в базу
-      encryptedContent = await encryptMessageContent(content, sessionCrypto);
-      console.log('SessionCrypto: Message encrypted for database');
+      // Опросы не шифруются, так как их нужно парсить на сервере
+      if (type === 'poll') {
+        encryptedContent = content;
+      } else {
+        // Шифруем сообщение перед отправкой в базу
+        encryptedContent = await encryptMessageContent(content, sessionCrypto);
+        console.log('SessionCrypto: Message encrypted for database');
+      }
       
-      // Отправляем ТОЛЬКО зашифрованное сообщение
+      // Отправляем сообщение (зашифрованное или опрос)
       await messagesAPI.send(room.id, encryptedContent, type, replyTo);
       setReplyingTo(null);
       
@@ -334,8 +386,10 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
 
   // Прокрутка к следующему упоминанию
   const scrollToNextMention = async () => {
+    if (!user) return;
+    
     const mentionedMessages = messages.filter(m => 
-      m.mentions?.includes(user!.id) && m.sender_id !== user!.id
+      m && m.mentions && m.mentions.includes(user.id) && m.sender_id !== user.id
     );
     
     if (mentionedMessages.length > 0) {
@@ -346,12 +400,18 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
         element.classList.add('highlight-message');
         setTimeout(() => element.classList.remove('highlight-message'), 2000);
       }
+    } else {
+      toast.info('Нет новых упоминаний');
     }
 
     // Сбрасываем счетчик упоминаний (кроме режима Глаз Бога)
     if (!room.isGodMode) {
-      await roomsAPI.markAsRead(room.id, true, false);
-      setUnreadMentions(0);
+      try {
+        await roomsAPI.markAsRead(room.id, true, false);
+        setUnreadMentions(0);
+      } catch (error: any) {
+        console.error('Ошибка при отметке упоминаний как прочитанных:', error);
+      }
     }
   };
 
@@ -380,21 +440,45 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
     }
   };
 
-  // Отметить все как прочитанное при входе и прокрутить к последнему непрочитанному сообщению
+  // Отметить все как прочитанное при входе и прокрутить к последнему прочитанному сообщению
   useEffect(() => {
     const markAsReadOnEnter = async () => {
-      if (user && !room.isGodMode) {
-        // Находим последнее непрочитанное сообщение
+      if (user && !room.isGodMode && messages.length > 0) {
+        // Находим последнее прочитанное сообщение
         const lastReadTime = room.last_read?.[user.id] ? new Date(room.last_read[user.id]).getTime() : 0;
-        const unreadMessages = messages.filter(m => 
-          new Date(m.created_at).getTime() > lastReadTime && m.sender_id !== user.id
-        );
         
-        if (unreadMessages.length > 0) {
-          // Прокручиваем к последнему непрочитанному сообщению
-          const lastUnreadMessage = unreadMessages[unreadMessages.length - 1];
+        // Находим последнее прочитанное сообщение (последнее сообщение до непрочитанных)
+        let lastReadMessage: Message | null = null;
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const msg = messages[i];
+          const msgTime = new Date(msg.created_at).getTime();
+          // Ищем последнее сообщение, которое было прочитано (время <= lastReadTime)
+          // И которое не от текущего пользователя (чтобы не считать свои сообщения как прочитанные)
+          if (msgTime <= lastReadTime && msg.sender_id !== user.id) {
+            lastReadMessage = msg;
+            break;
+          }
+        }
+        
+        // Если не нашли прочитанное сообщение от других пользователей, ищем любое последнее прочитанное
+        if (!lastReadMessage) {
+          for (let i = messages.length - 1; i >= 0; i--) {
+            const msg = messages[i];
+            const msgTime = new Date(msg.created_at).getTime();
+            if (msgTime <= lastReadTime) {
+              lastReadMessage = msg;
+              break;
+            }
+          }
+        }
+        
+        if (lastReadMessage) {
+          setLastReadMessageId(lastReadMessage.id);
+          setShowNewMessagesDivider(true);
+          
+          // Прокручиваем к последнему прочитанному сообщению
           setTimeout(() => {
-            const messageElement = document.getElementById(`message-${lastUnreadMessage.id}`);
+            const messageElement = document.getElementById(`message-${lastReadMessage!.id}`);
             if (messageElement) {
               messageElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
             } else {
@@ -403,13 +487,18 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
             }
           }, 300);
         } else {
-          // Если нет непрочитанных, прокручиваем вниз
+          // Если нет прочитанных сообщений, прокручиваем вниз
+          setLastReadMessageId(null);
+          setShowNewMessagesDivider(false);
           setTimeout(() => scrollToBottom(), 300);
         }
         
-        await roomsAPI.markAsRead(room.id, false, false);
+        // НЕ сбрасываем счетчики упоминаний при входе - они должны оставаться до явного просмотра
+        // await roomsAPI.markAsRead(room.id, false, false);
       } else {
         // В режиме Глаз Бога просто прокручиваем вниз
+        setLastReadMessageId(null);
+        setShowNewMessagesDivider(false);
         setTimeout(() => scrollToBottom(), 300);
       }
     };
@@ -418,7 +507,7 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
     if (!loading && messages.length > 0) {
       markAsReadOnEnter();
     }
-  }, [room.id, room.isGodMode, user, messages.length, loading]);
+  }, [room.id, room.isGodMode, user, messages.length, loading, room.last_read]);
 
   const pinnedMessage = currentRoom.pinned_message_id
     ? messages.find(m => m.id === currentRoom.pinned_message_id)
@@ -493,6 +582,13 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
                 : room.name}
               {room.isGodMode && (
                 <Badge variant="secondary" className="text-xs animate-pulse">Режим наблюдения</Badge>
+              )}
+              {/* Отображение меншенов через '@' */}
+              {unreadMentions > 0 && !room.isGodMode && (
+                <Badge variant="default" className="bg-red-500 text-white border-2 border-red-600 flex items-center gap-1 text-xs">
+                  <AtSign className="w-3 h-3" />
+                  {unreadMentions}
+                </Badge>
               )}
             </h2>
             {room.type === 'dm' ? (
@@ -732,28 +828,50 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
                   msg.sender_username.toLowerCase().includes(searchQuery.toLowerCase()) ||
                   (msg.sender_display_name && msg.sender_display_name.toLowerCase().includes(searchQuery.toLowerCase()))
                 )
-                .map((message) => {
+                .map((message, index) => {
                   const replyToMsg = message.reply_to 
                     ? messages.find(m => m && m.id === message.reply_to)
                     : null;
                   
+                  // Показываем разделитель "Новые сообщения" ПЕРЕД первым непрочитанным сообщением
+                  // Первое непрочитанное сообщение - это первое сообщение после lastReadMessageId
+                  const prevMessage = index > 0 ? messages[index - 1] : null;
+                  const isFirstUnread = showNewMessagesDivider && 
+                                       lastReadMessageId && 
+                                       prevMessage?.id === lastReadMessageId;
+                  
                   return (
-                    <div
-                      key={message.id}
-                      id={`message-${message.id}`}
-                      className="animate-message-in transition-transform duration-200 ease-out hover:-translate-y-0.5"
-                    >
-                      <MessageBubble
-                        message={message}
-                        onReply={setReplyingTo}
-                        onPin={handlePinMessage}
-                        onDelete={handleDeleteMessage}
-                        onUserClick={handleUserClick}
-                        isPinned={message.id === currentRoom.pinned_message_id}
-                        replyToMessage={replyToMsg}
-                        onEdit={loadMessages}
-                      />
-                    </div>
+                    <React.Fragment key={message.id}>
+                      {isFirstUnread && (
+                        <div className="sticky top-0 z-10 flex items-center gap-2 my-2 py-2 bg-background/95 backdrop-blur-sm border-y border-primary/30">
+                          <div className="flex-1 h-px bg-primary/30"></div>
+                          <span className="text-xs font-semibold text-primary px-3 py-1 bg-primary/10 rounded-full">
+                            Новые сообщения
+                          </span>
+                          <div className="flex-1 h-px bg-primary/30"></div>
+                        </div>
+                      )}
+                      <div
+                        id={`message-${message.id}`}
+                        className="animate-message-in transition-transform duration-200 ease-out hover:-translate-y-0.5"
+                      >
+                        <MessageBubble
+                          message={message}
+                          onReply={setReplyingTo}
+                          onPin={handlePinMessage}
+                          onDelete={handleDeleteMessage}
+                          onUserClick={handleUserClick}
+                          isPinned={message.id === currentRoom.pinned_message_id}
+                          replyToMessage={replyToMsg}
+                          onEdit={loadMessages}
+                          onForward={handleForwardMessages}
+                          onStartEdit={(msg) => {
+                            setEditingMessage(msg);
+                            setReplyingTo(null); // Отменяем ответ при начале редактирования
+                          }}
+                        />
+                      </div>
+                    </React.Fragment>
                   );
                 })}
               <div ref={messagesEndRef} />
@@ -827,6 +945,8 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
             replyingTo={replyingTo}
             onCancelReply={() => setReplyingTo(null)}
             disabled={!canSend || room.isGodMode}
+            editingMessage={editingMessage}
+            onCancelEdit={() => setEditingMessage(null)}
           />
         )}
       </div>
@@ -842,6 +962,19 @@ export function ChatRoom({ room, onBack, onUserClick: onUserClickProp, onOpenFri
         godModeEnabled={godModeEnabled}
         currentUserId={user?.id}
       />
+
+      {/* Диалог пересылки сообщений */}
+      {forwardingMessage && (
+        <ForwardMessagesDialog
+          open={showForwardDialog}
+          onOpenChange={setShowForwardDialog}
+          messages={[forwardingMessage]}
+          onForwardComplete={() => {
+            setForwardingMessage(null);
+            setSelectedMessages(new Set());
+          }}
+        />
+      )}
     </div>
   );
 }
