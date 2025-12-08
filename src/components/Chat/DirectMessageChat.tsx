@@ -1,16 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { DirectMessage, Message, dmAPI, messagesAPI, usersAPI, User } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
-import { useSessionCrypto } from '../../contexts/SessionCryptoContext';
 import { useAchievements } from '../../contexts/AchievementsContext';
-import { encryptMessageContent } from '../../utils/messageEncryption';
 import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { Button } from '../ui/button';
 import { Avatar, AvatarImage, AvatarFallback } from '../ui/avatar';
 import { toast } from '../ui/sonner';
 import { ArrowLeft, ArrowDown } from '../ui/icons';
-import { fixMediaUrl } from '../../utils/urlFix';
 
 interface DirectMessageChatProps {
   dm: DirectMessage;
@@ -20,7 +17,6 @@ interface DirectMessageChatProps {
 
 export function DirectMessageChat({ dm, onBack, onUserClick: onUserClickProp }: DirectMessageChatProps) {
   const { user } = useAuth();
-  const sessionCrypto = useSessionCrypto();
   const { tracker } = useAchievements();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
@@ -35,10 +31,9 @@ export function DirectMessageChat({ dm, onBack, onUserClick: onUserClickProp }: 
     loadMessages();
     loadOtherUser();
     
-    // Real-time обновление сообщений - как в Telegram (3 секунды)
     const interval = setInterval(() => {
       loadMessages();
-    }, 3000); // Real-time: обновление каждые 3 секунды
+    }, 3000); // Обновление каждые 3 секунды
     
     return () => clearInterval(interval);
   }, [dm.id]);
@@ -109,24 +104,7 @@ export function DirectMessageChat({ dm, onBack, onUserClick: onUserClickProp }: 
 
   const handleSendMessage = async (content: string, type: Message['type'], replyTo?: string) => {
     try {
-      // Шифрование (не блокируем отправку, если не готово - используется базовое шифрование)
-      let encryptedContent: string;
-
-      // Определяем ID получателя (другой участник DM)
-      const recipientId = dm.participants?.find(id => id !== user?.id);
-      
-      if (!recipientId) {
-        console.error('E2EE: No recipient ID found for DM');
-        toast.error('Не удалось определить получателя сообщения.');
-        return;
-      }
-
-      // Шифруем сообщение перед отправкой в базу
-      encryptedContent = await encryptMessageContent(content, sessionCrypto);
-      console.log('SessionCrypto: Direct message encrypted for database');
-      
-      // Отправляем ТОЛЬКО зашифрованное сообщение
-      await dmAPI.sendMessage(dm.id, encryptedContent, type, replyTo);
+      await dmAPI.sendMessage(dm.id, content, type, replyTo);
       setReplyingTo(null);
       
       // Проверка на первое сообщение в ЛС
@@ -229,7 +207,7 @@ export function DirectMessageChat({ dm, onBack, onUserClick: onUserClickProp }: 
             <div className="flex items-center gap-3">
               <Avatar className="w-10 h-10">
                 {(otherUser as any).avatar ? (
-                  <AvatarImage src={fixMediaUrl((otherUser as any).avatar)} alt={otherUser.username} />
+                  <AvatarImage src={(otherUser as any).avatar} alt={otherUser.username} />
                 ) : (
                   <AvatarFallback className="bg-primary/10 text-primary">
                     {((otherUser as any).display_name || otherUser.username).charAt(0).toUpperCase()}

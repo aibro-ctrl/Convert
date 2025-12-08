@@ -14,6 +14,10 @@ export interface Notification {
   read: boolean;
   createdAt: string;
   actionData?: any; // Дополнительные данные для действий
+  deleted?: boolean; // Флаг мягкого удаления
+  deleted_at?: string; // Дата удаления
+  deleted_by?: string; // Кто удалил
+  dm_id?: string; // ID DM чата (для уведомлений в DM)
 }
 
 // Создать уведомление
@@ -79,9 +83,9 @@ export async function getUserNotifications(userId: string): Promise<Notification
       })
     );
     
-    // Filter out null/undefined notifications and ensure they have required properties
+    // Filter out null/undefined notifications, deleted notifications, and ensure they have required properties
     // @ts-ignore
-    return notifications.filter(n => n && n.id && n.type && n.userId);
+    return notifications.filter(n => n && n.id && n.type && n.userId && !n.deleted);
   } catch (error: any) {
     console.error('Get user notifications error:', error);
     return [];

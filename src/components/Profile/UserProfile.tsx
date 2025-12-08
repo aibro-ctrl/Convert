@@ -1048,20 +1048,17 @@ export function UserProfile({ userId, onBack, onOpenChat, onOpenDM, onViewUser, 
           <div className="flex-1 overflow-y-auto space-y-4 p-6">
             {/* Уведомления */}
             <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Bell className="w-4 h-4" />
-                <h4 className="font-semibold">Уведомления</h4>
-                {notificationCount > 0 && (
-                  <Badge variant="destructive" className="ml-1 px-1.5 py-0 text-xs">
-                    {notificationCount}
-                  </Badge>
-                )}
-              </div>
               <NotificationsPanel 
                 onClose={() => {}} 
                 onFriendRequestHandled={() => {
                   loadFriends();
                   loadNotificationCount();
+                }}
+                hideHeader
+                onNavigateToRoom={(roomId, messageId) => {
+                  // TODO: Реализовать переход к комнате и сообщению
+                  // Это будет работать после интеграции с навигацией в App.tsx
+                  console.log('Navigate to room:', roomId, 'message:', messageId);
                 }}
               />
             </div>

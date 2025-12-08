@@ -1,10 +1,8 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { useConnection } from '../../contexts/ConnectionContext';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
-import { Checkbox } from '../ui/checkbox';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { toast } from '../ui/sonner';
 
@@ -14,14 +12,11 @@ interface RegisterProps {
 
 export function Register({ onSwitchToLogin }: RegisterProps) {
   const { signup } = useAuth();
-  const { isOnline, checkConnection } = useConnection();
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const isWeakPassword = (password: string): boolean => {
     // Check for simple sequential numbers
@@ -86,24 +81,6 @@ export function Register({ onSwitchToLogin }: RegisterProps) {
       return;
     }
 
-    // Проверяем доступность сервера перед попыткой регистрации
-    if (!isOnline) {
-      toast.warning('Сервер недоступен', {
-        description: 'Проверяю подключение к серверу...',
-        duration: 3000
-      });
-      
-      const serverAvailable = await checkConnection();
-      if (!serverAvailable) {
-        toast.error('Сервер недоступен', {
-          description: 'Не удалось подключиться к серверу. Убедитесь, что сервер запущен и доступен.',
-          duration: 10000
-        });
-        setLoading(false);
-        return;
-      }
-    }
-
     setLoading(true);
 
     try {
@@ -117,60 +94,25 @@ export function Register({ onSwitchToLogin }: RegisterProps) {
       const errorMessage = error.message || 'Ошибка регистрации';
       
       // Check specific error types
-      if (errorMessage.includes('email уже существует') || 
-          errorMessage.includes('Пользователь с таким email') ||
-          errorMessage.includes('уже существует') ||
-          errorMessage.includes('already exists')) {
+      if (errorMessage.includes('email уже существует') || errorMessage.includes('Пользователь с таким email')) {
         toast.error('Email уже зарегистрирован', {
-          description: 'Этот email уже используется. Попробуйте войти или используйте другой email.',
-          duration: 5000
+          description: 'Этот email уже используется. Попробуйте войти или используйте другой email.'
         });
-      } else if (errorMessage.includes('уже занято') || 
-                 errorMessage.includes('Имя пользователя') ||
-                 errorMessage.includes('username') && errorMessage.includes('taken')) {
+      } else if (errorMessage.includes('уже занято') || errorMessage.includes('Имя пользователя')) {
         toast.error('Никнейм занят', {
-          description: 'Это имя пользователя уже используется. Выберите другое имя.',
-          duration: 5000
+          description: 'Это имя пользователя уже используется. Выберите другое имя.'
         });
-      } else if (errorMessage.includes('неверный') || 
-                 errorMessage.includes('существует, но пароль') ||
-                 errorMessage.includes('Invalid')) {
+      } else if (errorMessage.includes('неверный') || errorMessage.includes('существует, но пароль')) {
         toast.error('Email уже зарегистрирован', {
-          description: 'Аккаунт с этим email уже существует. Используйте форму входа.',
-          duration: 5000
+          description: 'Аккаунт с этим email уже существует. Используйте форму входа.'
         });
-      } else if (errorMessage.includes('Сервер недоступен') || 
-                 errorMessage.includes('ERR_CONNECTION_REFUSED')) {
-        toast.error('Сервер недоступен', {
-          description: 'Не удалось подключиться к серверу. Убедитесь, что сервер запущен и доступен. Проверьте адрес сервера в настройках.',
-          duration: 10000
-        });
-      } else if (errorMessage.includes('Сервер не отвечает') || 
-                 errorMessage.includes('Сервер временно недоступен') ||
-                 errorMessage.includes('превышено время ожидания') ||
-                 errorMessage.includes('504') ||
-                 errorMessage.includes('Gateway Time-out')) {
-        toast.error('Сервер не отвечает', {
-          description: 'Пожалуйста, подождите несколько секунд и попробуйте зарегистрироваться снова. Если проблема сохраняется, проверьте подключение к интернету.',
-          duration: 8000
-        });
-      } else if (errorMessage.includes('Ошибка подключения') || 
-                 errorMessage.includes('Network error') ||
-                 errorMessage.includes('Failed to fetch')) {
-        toast.error('Ошибка подключения', {
-          description: 'Не удалось подключиться к серверу. Проверьте подключение к интернету и попробуйте еще раз.',
-          duration: 8000
-        });
-      } else if (errorMessage.includes('Could not query the database') ||
-                 errorMessage.includes('schema cache')) {
-        toast.error('Ошибка подключения к базе данных', {
-          description: 'Проверьте настройки базы данных на сервере. Обратитесь к администратору.',
-          duration: 7000
+      } else if (errorMessage.includes('invalid') || errorMessage.includes('Invalid')) {
+        toast.error('Некорректные данные', {
+          description: 'Проверьте правильность введенного email адреса'
         });
       } else {
         toast.error('Ошибка регистрации', {
-          description: errorMessage,
-          duration: 5000
+          description: errorMessage
         });
       }
     } finally {
@@ -212,49 +154,23 @@ export function Register({ onSwitchToLogin }: RegisterProps) {
             <Label htmlFor="password">Пароль</Label>
             <Input
               id="password"
-              type={showPassword ? "text" : "password"}
+              type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               placeholder="••••••••"
             />
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="show-password"
-                checked={showPassword}
-                onCheckedChange={(checked) => setShowPassword(checked === true)}
-              />
-              <Label
-                htmlFor="show-password"
-                className="text-sm font-normal cursor-pointer"
-              >
-                Показать пароль
-              </Label>
-            </div>
           </div>
           <div className="space-y-2">
             <Label htmlFor="confirmPassword">Подтвердите пароль</Label>
             <Input
               id="confirmPassword"
-              type={showConfirmPassword ? "text" : "password"}
+              type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
               placeholder="••••••••"
             />
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="show-confirm-password"
-                checked={showConfirmPassword}
-                onCheckedChange={(checked) => setShowConfirmPassword(checked === true)}
-              />
-              <Label
-                htmlFor="show-confirm-password"
-                className="text-sm font-normal cursor-pointer"
-              >
-                Показать пароль
-              </Label>
-            </div>
           </div>
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? 'Регистрация...' : 'Зарегистрироваться'}
@@ -270,6 +186,13 @@ export function Register({ onSwitchToLogin }: RegisterProps) {
                 Войти
               </button>
             </p>
+            
+            {/* Helpful tip about test account */}
+            <div className="mt-3 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800 text-left">
+              <p className="text-xs text-green-900 dark:text-green-100">
+                💡 <strong>Для быстрого тестирования:</strong> Нажмите на иконку ⚙️ в правом верхнем углу и создайте тестового пользователя
+              </p>
+            </div>
           </div>
         </form>
       </CardContent>

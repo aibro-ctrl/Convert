@@ -1,6 +1,7 @@
 import * as kv from './kv_store.tsx';
 import { User } from './auth.tsx';
 import { Room } from './rooms.tsx';
+import * as notifications from './notifications.tsx';
 
 // Проверка мута с учетом времени
 async function checkMute(user: User, userId: string): Promise<{ muted: boolean; message?: string }> {
@@ -252,12 +253,66 @@ export async function sendMessage(
       room.unread_count = {};
     }
 
-    // Обновляем счетчики упоминаний в комнате
+    // Обновляем счетчики упоминаний в комнате и создаем уведомления
     if (mentions.length > 0) {
-      mentions.forEach(mentionedUserId => {
+      // Проверяем, было ли упоминание @admin или @moder
+      const hasAdminMention = content.includes('@admin');
+      const hasModerMention = content.includes('@moder');
+      
+      // Используем Promise.all для параллельного создания уведомлений
+      const notificationPromises = mentions.map(async (mentionedUserId) => {
         if (mentionedUserId !== userId) { // Не считаем упоминания себя
           room.unread_mentions![mentionedUserId] = (room.unread_mentions![mentionedUserId] || 0) + 1;
+          
+          // Создаем уведомление о призыве для @admin или @moder
+          if (hasAdminMention || hasModerMention) {
+            try {
+              await notifications.createNotification(
+                mentionedUserId,
+                'mention',
+                userId,
+                {
+                  roomId: roomId,
+                  roomName: room.name,
+                  messageId: messageId,
+                  content: `Вас призвали в комнате "${room.name}"`,
+                  actionData: {
+                    type: hasAdminMention ? 'admin_call' : 'moderator_call',
+                    caller: user.display_name || user.username,
+                    roomId: roomId,
+                    roomName: room.name,
+                    messageId: messageId
+                  }
+                }
+              );
+            } catch (notifError) {
+              console.error('Error creating mention notification:', notifError);
+              // Не прерываем отправку сообщения, если не удалось создать уведомление
+            }
+          } else {
+            // Обычное упоминание
+            try {
+              await notifications.createNotification(
+                mentionedUserId,
+                'mention',
+                userId,
+                {
+                  roomId: roomId,
+                  roomName: room.name,
+                  messageId: messageId,
+                  content: content.substring(0, 100)
+                }
+              );
+            } catch (notifError) {
+              console.error('Error creating mention notification:', notifError);
+            }
+          }
         }
+      });
+      
+      // Ждем завершения всех уведомлений (но не блокируем отправку сообщения)
+      Promise.all(notificationPromises).catch(err => {
+        console.error('Error creating some notifications:', err);
       });
     }
 
@@ -486,6 +541,82 @@ export async function editMessage(messageId: string, userId: string, newContent:
     message.mentions = mentions.length > 0 ? mentions : undefined;
 
     await kv.set(`message:${messageId}`, message);
+    
+    // Обновляем счетчики упоминаний и создаем уведомления при редактировании
+    if (mentions.length > 0) {
+      const room = await kv.get(`room:${message.room_id}`) as Room;
+      const user = await kv.get(`user:${userId}`) as User;
+      
+      if (room && user) {
+        // Инициализируем счетчики, если их нет
+        if (!room.unread_mentions) {
+          room.unread_mentions = {};
+        }
+        
+        // Проверяем, было ли упоминание @admin или @moder
+        const hasAdminMention = newContent.includes('@admin');
+        const hasModerMention = newContent.includes('@moder');
+        
+        // Используем Promise.all для параллельного создания уведомлений
+        const notificationPromises = mentions.map(async (mentionedUserId) => {
+          if (mentionedUserId !== userId) { // Не считаем упоминания себя
+            room.unread_mentions![mentionedUserId] = (room.unread_mentions![mentionedUserId] || 0) + 1;
+            
+            // Создаем уведомление о призыве для @admin или @moder
+            if (hasAdminMention || hasModerMention) {
+              try {
+                await notifications.createNotification(
+                  mentionedUserId,
+                  'mention',
+                  userId,
+                  {
+                    roomId: message.room_id,
+                    roomName: room.name,
+                    messageId: messageId,
+                    content: `Вас призвали в комнате "${room.name}"`,
+                    actionData: {
+                      type: hasAdminMention ? 'admin_call' : 'moderator_call',
+                      caller: user.display_name || user.username,
+                      roomId: message.room_id,
+                      roomName: room.name,
+                      messageId: messageId
+                    }
+                  }
+                );
+              } catch (notifError) {
+                console.error('Error creating mention notification:', notifError);
+              }
+            } else {
+              // Обычное упоминание
+              try {
+                await notifications.createNotification(
+                  mentionedUserId,
+                  'mention',
+                  userId,
+                  {
+                    roomId: message.room_id,
+                    roomName: room.name,
+                    messageId: messageId,
+                    content: newContent.substring(0, 100)
+                  }
+                );
+              } catch (notifError) {
+                console.error('Error creating mention notification:', notifError);
+              }
+            }
+          }
+        });
+        
+        // Сохраняем обновленные счетчики
+        await kv.set(`room:${message.room_id}`, room);
+        
+        // Ждем завершения всех уведомлений (но не блокируем редактирование)
+        Promise.all(notificationPromises).catch(err => {
+          console.error('Error creating some notifications:', err);
+        });
+      }
+    }
+    
     return { data: message };
   } catch (err: any) {
     return { error: `Ошибка редактирования сообщения: ${err.message}` };

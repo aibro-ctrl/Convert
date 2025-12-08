@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { notificationsAPI, usersAPI, Notification } from '../../utils/api';
 import { Button } from '../ui/button';
 import { Card, CardContent } from '../ui/card';
@@ -10,12 +10,15 @@ import { useAchievements } from '../../contexts/AchievementsContext';
 interface NotificationsPanelProps {
   onClose: () => void;
   onFriendRequestHandled?: () => void; // Callback при обработке запроса в друзья
+  onNavigateToRoom?: (roomId: string, messageId?: string) => void; // Callback для перехода к комнате/сообщению
+  hideHeader?: boolean; // Скрыть заголовок (когда панель уже внутри вкладки)
 }
 
-export function NotificationsPanel({ onClose, onFriendRequestHandled }: NotificationsPanelProps) {
+export function NotificationsPanel({ onClose, onFriendRequestHandled, onNavigateToRoom, hideHeader }: NotificationsPanelProps) {
   const { tracker } = useAchievements();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
+  const seenSummonsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     loadNotifications();
@@ -39,6 +42,30 @@ export function NotificationsPanel({ onClose, onFriendRequestHandled }: Notifica
       const data = await notificationsAPI.getAll();
       // Filter out null/undefined notifications and ensure they have required properties
       const validNotifications = (data.notifications || []).filter(n => n && n.id && n.type);
+
+      // Push-уведомления для призыва (@admin / @moder)
+      const newSummons = validNotifications.filter(
+        (n) =>
+          n.type === 'mention' &&
+          n.actionData?.type &&
+          (n.actionData.type === 'admin_call' || n.actionData.type === 'moderator_call') &&
+          !seenSummonsRef.current.has(n.id)
+      );
+
+      newSummons.forEach((n) => {
+        seenSummonsRef.current.add(n.id);
+        const title = n.actionData?.type === 'admin_call' ? 'Призыв администратора' : 'Призыв модератора';
+        const caller = n.actionData?.caller || 'Пользователь';
+        const roomName = n.actionData?.roomName || 'Комната';
+        toast(title, {
+          description: `${caller} призвал в "${roomName}"`,
+          action: onNavigateToRoom && n.roomId ? {
+            label: 'Открыть',
+            onClick: () => onNavigateToRoom(n.roomId!, n.messageId),
+          } : undefined,
+        });
+      });
+
       setNotifications(validNotifications);
     } catch (error: any) {
       console.error('Failed to load notifications:', error);
@@ -216,15 +243,17 @@ export function NotificationsPanel({ onClose, onFriendRequestHandled }: Notifica
 
   return (
     <div className="h-full flex flex-col bg-background">
-      <div className="border-b p-4">
-        <div className="flex items-center gap-2">
-          <Bell className="w-5 h-5" />
-          <h2 className="text-xl">Уведомления</h2>
-          {unreadCount > 0 && (
-            <Badge variant="destructive">{unreadCount}</Badge>
-          )}
+      {!hideHeader && (
+        <div className="border-b p-4">
+          <div className="flex items-center gap-2">
+            <Bell className="w-5 h-5" />
+            <h2 className="text-xl">Уведомления</h2>
+            {unreadCount > 0 && (
+              <Badge variant="destructive">{unreadCount}</Badge>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {loading ? (
@@ -250,10 +279,54 @@ export function NotificationsPanel({ onClose, onFriendRequestHandled }: Notifica
                     </div>
                     
                     <div className="flex-1 space-y-2">
-                      <p className="text-sm">{notification.content || 'Уведомление'}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {notification.createdAt ? formatTime(notification.createdAt) : ''}
-                      </p>
+                      {/* Улучшенное отображение для упоминаний с призывом */}
+                      {notification.type === 'mention' && notification.actionData?.type && 
+                       (notification.actionData.type === 'admin_call' || notification.actionData.type === 'moderator_call') ? (
+                        <>
+                          <p className="text-sm font-semibold">
+                            {notification.actionData.type === 'admin_call' ? '🔔 Призыв администратора' : '🔔 Призыв модератора'}
+                          </p>
+                          <p className="text-sm">
+                            <span className="font-medium">{notification.actionData.caller}</span> призвал вас в комнате{' '}
+                            <span className="font-medium">"{notification.actionData.roomName}"</span>
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {notification.createdAt ? formatTime(notification.createdAt) : ''}
+                          </p>
+                          {onNavigateToRoom && notification.roomId && (
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                onNavigateToRoom(notification.roomId!, notification.messageId);
+                                handleDismiss(notification.id);
+                              }}
+                            >
+                              Перейти к сообщению
+                            </Button>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-sm">{notification.content || 'Уведомление'}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {notification.createdAt ? formatTime(notification.createdAt) : ''}
+                          </p>
+                          
+                          {/* Для обычных упоминаний тоже добавляем кнопку перехода */}
+                          {notification.type === 'mention' && onNavigateToRoom && notification.roomId && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                onNavigateToRoom(notification.roomId!, notification.messageId);
+                                handleDismiss(notification.id);
+                              }}
+                            >
+                              Перейти к сообщению
+                            </Button>
+                          )}
+                        </>
+                      )}
 
                       {notification.type === 'friend_request' && notification.actionData?.requestKey && (
                         <div className="flex gap-2 mt-2">
@@ -273,7 +346,7 @@ export function NotificationsPanel({ onClose, onFriendRequestHandled }: Notifica
                         </div>
                       )}
 
-                      {notification.type !== 'friend_request' && (
+                      {notification.type !== 'friend_request' && !(notification.type === 'mention' && onNavigateToRoom && notification.roomId) && (
                         <Button
                           size="sm"
                           variant="ghost"

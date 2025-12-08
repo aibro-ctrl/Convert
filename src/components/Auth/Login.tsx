@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { useConnection } from '../../contexts/ConnectionContext';
 import { useCrypto } from '../../contexts/CryptoContext';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
-import { Checkbox } from '../ui/checkbox';
 import { toast } from '../ui/sonner';
+import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { supabase } from '../../utils/supabase/client';
 
 interface LoginProps {
@@ -16,11 +15,10 @@ interface LoginProps {
 
 export function Login({ onSwitchToRegister }: LoginProps) {
   const { signin } = useAuth();
-  const { isOnline, checkConnection } = useConnection();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
+  const [creatingTestUser, setCreatingTestUser] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   
   // Forgot password states
@@ -81,6 +79,59 @@ export function Login({ onSwitchToRegister }: LoginProps) {
     setResetEmail('');
   };
 
+  const handleQuickTestLogin = async () => {
+    setCreatingTestUser(true);
+    
+    // First, clear any potentially bad tokens
+    localStorage.clear();
+    
+    try {
+      // Try to create test user first (use anon key for Supabase Edge Functions)
+      const createResponse = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/make-server-b0f1e6d5/auth/signup`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${publicAnonKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            email: 'test@example.com',
+            password: 'test12345678',
+            username: 'testuser',
+          }),
+        }
+      );
+
+      const createData = await createResponse.json();
+      
+      if (createResponse.ok) {
+        console.log('Test user created successfully');
+        toast.success('Тестовый пользователь создан!', {
+          description: 'Автоматический вход...'
+        });
+      } else if (createData.error?.includes('уже существует') || createData.error?.includes('уже занято')) {
+        // User exists, that's fine
+        console.log('Test user already exists, logging in...');
+      } else {
+        // Log the error but continue to try login
+        console.log('Create test user response:', createData);
+      }
+
+      // Now try to log in
+      await signin('test@example.com', 'test12345678');
+      toast.success('Добро пожаловать!', {
+        description: 'Вы вошли как тестовый пользователь'
+      });
+    } catch (error: any) {
+      console.error('Quick test login error:', error);
+      toast.error('Ошибка быстрого входа', {
+        description: error.message || 'Попробуйте создать пользователя через панель разработчика (⚙️)'
+      });
+    } finally {
+      setCreatingTestUser(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,24 +153,6 @@ export function Login({ onSwitchToRegister }: LoginProps) {
       return;
     }
 
-    // Проверяем доступность сервера перед попыткой входа
-    if (!isOnline) {
-      toast.warning('Сервер недоступен', {
-        description: 'Проверяю подключение к серверу...',
-        duration: 3000
-      });
-      
-      const serverAvailable = await checkConnection();
-      if (!serverAvailable) {
-        toast.error('Сервер недоступен', {
-          description: 'Не удалось подключиться к серверу. Убедитесь, что сервер запущен и доступен.',
-          duration: 10000
-        });
-        setLoading(false);
-        return;
-      }
-    }
-
     setLoading(true);
 
     try {
@@ -132,40 +165,16 @@ export function Login({ onSwitchToRegister }: LoginProps) {
       console.error('Login error:', error);
       const errorMessage = error.message || 'Ошибка входа';
       
-      // Обработка ошибок таймаута и недоступности сервера
-      if (errorMessage.includes('Сервер не отвечает') || 
-          errorMessage.includes('Сервер временно недоступен') ||
-          errorMessage.includes('превышено время ожидания') ||
-          errorMessage.includes('504') ||
-          errorMessage.includes('Gateway Time-out')) {
-        toast.error('Сервер не отвечает', {
-          description: 'Пожалуйста, подождите несколько секунд и попробуйте войти снова. Если проблема сохраняется, проверьте подключение к интернету.',
-          duration: 8000
-        });
-      } else if (errorMessage.includes('Сервер недоступен') || 
-                 errorMessage.includes('ERR_CONNECTION_REFUSED')) {
-        toast.error('Сервер недоступен', {
-          description: 'Не удалось подключиться к серверу. Убедитесь, что сервер запущен и доступен. Проверьте адрес сервера в настройках.',
-          duration: 10000
-        });
-      } else if (errorMessage.includes('Ошибка подключения') || 
-                 errorMessage.includes('Network error') ||
-                 errorMessage.includes('Failed to fetch')) {
-        toast.error('Ошибка подключения', {
-          description: 'Не удалось подключиться к серверу. Проверьте подключение к интернету и попробуйте еще раз.',
-          duration: 8000
-        });
-      } else if (errorMessage.includes('Неверный email или пароль') || 
-                 errorMessage.includes('Invalid login credentials') || 
-                 errorMessage.includes('invalid_credentials')) {
-        toast.error('Неверный email или пароль', {
-          description: 'Проверьте правильность введенных данных или зарегистрируйтесь.',
-          duration: 5000
+      // Display the error message from the server
+      if (errorMessage.includes('Неверный email или пароль') || errorMessage.includes('Invalid login credentials') || errorMessage.includes('invalid_credentials')) {
+        toast.error('Пользователь не найден', {
+          description: '❌ Аккаунт с таким email не существует. Нажмите "🚀 Быстрый вход" ниже или зарегистрируйтесь.',
+          duration: 7000
         });
       } else if (errorMessage.includes('не найден') || errorMessage.includes('Пользователь не найден')) {
         toast.error('Аккаунт не найден', {
-          description: 'Пользователь с таким email не зарегистрирован. Зарегистрируйтесь или проверьте email.',
-          duration: 5000
+          description: '❌ Пользователь с таким email не зарегистрирован. Используйте "🚀 Быстрый вход" или создайте новый аккаунт.',
+          duration: 7000
         });
       } else if (errorMessage.includes('Email не подтвержден')) {
         toast.error('Email не подтвержден', {
@@ -280,28 +289,35 @@ export function Login({ onSwitchToRegister }: LoginProps) {
             </div>
             <Input
               id="password"
-              type={showPassword ? "text" : "password"}
+              type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               placeholder="••••••••"
             />
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="show-password"
-                checked={showPassword}
-                onCheckedChange={(checked) => setShowPassword(checked === true)}
-              />
-              <Label
-                htmlFor="show-password"
-                className="text-sm font-normal cursor-pointer"
-              >
-                Показать пароль
-              </Label>
+          </div>
+          <Button type="submit" className="w-full" disabled={loading || creatingTestUser}>
+            {loading ? 'Вход...' : 'Войти'}
+          </Button>
+          
+          {/* Quick Test Login Button */}
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-background px-2 text-muted-foreground">или</span>
             </div>
           </div>
-          <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? 'Вход...' : 'Войти'}
+          
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-blue-300 dark:border-blue-700 hover:from-blue-100 hover:to-indigo-100 dark:hover:from-blue-900/30 dark:hover:to-indigo-900/30"
+            onClick={handleQuickTestLogin}
+            disabled={loading || creatingTestUser}
+          >
+            {creatingTestUser ? '⏳ Создание и вход...' : '🚀 Быстрый вход (тестовый пользователь)'}
           </Button>
           
           <div className="text-center">

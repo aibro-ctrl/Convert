@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { supabaseUrl, publicAnonKey } from '../utils/supabase/info';
+import { projectId, publicAnonKey } from '../utils/supabase/info';
 
 interface ConnectionContextType {
   isOnline: boolean;
@@ -16,7 +16,7 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
   const checkConnection = useCallback(async () => {
     try {
       const response = await fetch(
-        `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/make-server-b0f1e6d5/health`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-b0f1e6d5/health`,
         {
           method: 'GET',
           headers: {
@@ -40,11 +40,11 @@ export function ConnectionProvider({ children }: { children: React.ReactNode }) 
     checkConnection();
   }, [checkConnection]);
 
-  // Периодическая проверка подключения каждые 30 секунд (увеличили интервал)
+  // Периодическая проверка подключения каждые 10 секунд
   useEffect(() => {
     const interval = setInterval(() => {
       checkConnection();
-    }, 30000); // Увеличили с 10 до 30 секунд
+    }, 10000);
 
     return () => clearInterval(interval);
   }, [checkConnection]);

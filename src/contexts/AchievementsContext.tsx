@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { AuthContext } from './AuthContext';
+import { useAuth } from './AuthContext';
 import { AchievementTracker } from '../utils/achievementTracker';
 import { AchievementNotification } from '../components/Profile/AchievementNotification';
 import { getAchievementById } from '../utils/achievements';
@@ -15,15 +15,12 @@ const AchievementsContext = createContext<AchievementsContextType>({
 export const useAchievements = () => useContext(AchievementsContext);
 
 export function AchievementsProvider({ children }: { children: ReactNode }) {
-  // Используем прямой доступ к AuthContext через useContext для безопасности
-  const authContext = useContext(AuthContext);
-  const user = authContext?.user || null;
-  
+  const { user } = useAuth();
   const [tracker, setTracker] = useState<AchievementTracker | null>(null);
   const [notifications, setNotifications] = useState<string[]>([]);
 
   useEffect(() => {
-    if (user?.id) {
+    if (user) {
       const newTracker = new AchievementTracker(user.id, (achievementId) => {
         // Добавить уведомление
         setNotifications(prev => [...prev, achievementId]);

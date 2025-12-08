@@ -1,28 +1,26 @@
-import React, { useState, useEffect, lazy, Suspense, useMemo, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ConnectionProvider, useConnection } from './contexts/ConnectionContext';
 import { AchievementsProvider } from './contexts/AchievementsContext';
-import { SessionCryptoProvider } from './contexts/SessionCryptoContext';
+import { CryptoProvider } from './contexts/CryptoContext';
 import { Login } from './components/Auth/Login';
 import { Register } from './components/Auth/Register';
 import { ResetPassword } from './components/Auth/ResetPassword';
+import { RoomList } from './components/Chat/RoomList';
+import { ChatRoom } from './components/Chat/ChatRoom';
+import { DirectMessagesList } from './components/Chat/DirectMessagesList';
+import { DirectMessageChat } from './components/Chat/DirectMessageChat';
+import { UserProfile } from './components/Profile/UserProfile';
 import { NotificationToast } from './components/Profile/NotificationToast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Toaster, ToastProvider, useToastListener } from './components/ui/sonner';
 import { Badge } from './components/ui/badge';
-import { Room, DirectMessage, roomsAPI, dmAPI, notificationsAPI, usersAPI } from './utils/api';
+import { Room, DirectMessage, roomsAPI, dmAPI, notificationsAPI } from './utils/api';
 import { MessageCircle, Users, User, WifiOff, Wifi, Mail } from './components/ui/icons';
 import { validateAndCleanToken } from './utils/tokenUtils';
 import logoEnvelope from 'figma:asset/28456c23b87e910377ba6ff1bfaf8a2b2f85670a.png';
 import logoText from 'figma:asset/358c3d7b52371e48c9dc5b2ec3f5b14609eb7b5e.png';
-
-// Lazy loading для тяжелых компонентов
-const RoomList = lazy(() => import('./components/Chat/RoomList').then(m => ({ default: m.RoomList })));
-const ChatRoom = lazy(() => import('./components/Chat/ChatRoom').then(m => ({ default: m.ChatRoom })));
-const DirectMessagesList = lazy(() => import('./components/Chat/DirectMessagesList').then(m => ({ default: m.DirectMessagesList })));
-const DirectMessageChat = lazy(() => import('./components/Chat/DirectMessageChat').then(m => ({ default: m.DirectMessageChat })));
-const UserProfile = lazy(() => import('./components/Profile/UserProfile').then(m => ({ default: m.UserProfile })));
 
 // Validate token on app startup - this runs before React renders
 validateAndCleanToken();
@@ -85,7 +83,6 @@ function MainApp() {
   const [unreadRooms, setUnreadRooms] = useState(0);
   const [unreadDMs, setUnreadDMs] = useState(0);
   const [unreadFriends, setUnreadFriends] = useState(0);
-  const [friendsCount, setFriendsCount] = useState(0);
   
   // Setup toast listener
   useToastListener();
@@ -97,13 +94,12 @@ function MainApp() {
     setActiveTab('profile');
   };
 
-  // Обновление счетчиков непрочитанных и уведомления с мемоизацией
+  // Обновление счетчиков непрочитанных и уведомления
   useEffect(() => {
     if (!user) return;
 
     let previousRooms: Room[] = [];
     let previousDMs: DirectMessage[] = [];
-    let updateTimeout: NodeJS.Timeout;
 
     const updateUnreadCounts = async () => {
       try {
@@ -191,36 +187,20 @@ function MainApp() {
           }
         });
 
-        // Подсчет общего количества друзей
-        try {
-          const friendsData = await usersAPI.getFriends();
-          setFriendsCount(friendsData.friends?.length || 0);
-        } catch (error) {
-          console.error('Failed to load friends count:', error);
-        }
-
         setUnreadRooms(roomCount);
         setUnreadDMs(dmCount);
         setUnreadFriends(unreadNotifications.length);
       } catch (error) {
         console.error('Failed to update unread counts:', error);
-        // При ошибке не обновляем счетчики, но и не выкидываем пользователя
       }
     };
 
-    // Real-time обновление счетчиков непрочитанных - как в Telegram (10 секунд)
-    // Это важно для отображения актуальных счетчиков, но не так часто как сообщения
     updateUnreadCounts();
-    const interval = setInterval(updateUnreadCounts, 10000); // 10 секунд для счетчиков
-    
-    return () => {
-      clearInterval(interval);
-      clearTimeout(updateTimeout);
-    };
+    const interval = setInterval(updateUnreadCounts, 10000); // Оптимизация: увеличили с 3 до 10 секунд
+    return () => clearInterval(interval);
   }, [user, isOnline]);
 
-  // Убрали лишнее логирование для оптимизации
-  // console.log('MainApp render - loading:', loading, 'user:', user ? `${user.username} (${user.id})` : 'null');
+  console.log('MainApp render - loading:', loading, 'user:', user ? `${user.username} (${user.id})` : 'null');
 
   if (loading) {
     return (
@@ -237,39 +217,18 @@ function MainApp() {
     return <AuthScreen />;
   }
 
-  // Loading fallback для lazy components
-  const LoadingFallback = () => (
-    <div className="flex items-center justify-center h-full">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2"></div>
-        <p className="text-sm text-muted-foreground">Загрузка...</p>
-      </div>
-    </div>
-  );
-
-  // If viewing another user's profile (or own profile from chat)
+  // If viewing another user's profile
   if (viewingUserId) {
-    // Если это текущий пользователь, возвращаемся в чат при onBack
-    const isViewingSelf = viewingUserId === user?.id;
-    
     return (
       <div className="h-screen">
-        <Suspense fallback={<LoadingFallback />}>
-          <UserProfile 
-            userId={viewingUserId} 
-            onBack={() => {
-              setViewingUserId(null);
-              // Если это был свой профиль из чата, возвращаемся в чат
-              if (isViewingSelf && selectedRoom) {
-                // selectedRoom уже установлен, просто очищаем viewingUserId
-              }
-            }}
-            onOpenChat={(room) => {
-              setViewingUserId(null);
-              setSelectedRoom(room);
-            }}
-          />
-        </Suspense>
+        <UserProfile 
+          userId={viewingUserId} 
+          onBack={() => setViewingUserId(null)}
+          onOpenChat={(room) => {
+            setViewingUserId(null);
+            setSelectedRoom(room);
+          }}
+        />
         <Toaster />
       </div>
     );
@@ -279,26 +238,16 @@ function MainApp() {
   if (selectedRoom) {
     return (
       <div className="h-screen">
-        <Suspense fallback={<LoadingFallback />}>
-          <ChatRoom 
-            key={selectedRoom.id}
-            room={selectedRoom} 
-            onBack={() => setSelectedRoom(null)}
-            onUserClick={(userId) => {
-              // Если кликнули на текущего пользователя, открываем свой профиль
-              // но не закрываем чат - можно вернуться назад
-              if (userId === user?.id) {
-                setViewingUserId(userId);
-                // Не закрываем selectedRoom, чтобы можно было вернуться
-              } else {
-                // Для других пользователей - стандартное поведение
-                setSelectedRoom(null);
-                setViewingUserId(userId);
-              }
-            }}
-            onOpenFriends={handleOpenFriends}
-          />
-        </Suspense>
+        <ChatRoom 
+          key={selectedRoom.id} // Пересоздаем компонент при смене комнаты
+          room={selectedRoom} 
+          onBack={() => setSelectedRoom(null)}
+          onUserClick={(userId) => {
+            setSelectedRoom(null);
+            setViewingUserId(userId);
+          }}
+          onOpenFriends={handleOpenFriends}
+        />
         <NotificationToast 
           onOpenChat={(room) => setSelectedRoom(room)}
           onOpenDM={(dm) => setSelectedDM(dm)}
@@ -314,17 +263,15 @@ function MainApp() {
   if (selectedDM) {
     return (
       <div className="h-screen">
-        <Suspense fallback={<LoadingFallback />}>
-          <DirectMessageChat 
-            key={selectedDM.id}
-            dm={selectedDM} 
-            onBack={() => setSelectedDM(null)}
-            onUserClick={(userId) => {
-              setSelectedDM(null);
-              setViewingUserId(userId);
-            }}
-          />
-        </Suspense>
+        <DirectMessageChat 
+          key={selectedDM.id}
+          dm={selectedDM} 
+          onBack={() => setSelectedDM(null)}
+          onUserClick={(userId) => {
+            setSelectedDM(null);
+            setViewingUserId(userId);
+          }}
+        />
         <NotificationToast 
           onOpenChat={(room) => setSelectedRoom(room)}
           onOpenDM={(dm) => setSelectedDM(dm)}
@@ -402,18 +349,11 @@ function MainApp() {
               <TabsTrigger value="friends" className="flex-1 text-base py-3 relative">
                 <Users className="w-5 h-5 mr-2" />
                 Друзья
-                <div className="flex items-center gap-1 ml-2">
-                  {friendsCount > 0 && (
-                    <Badge variant="outline" className="px-1.5 py-0 h-5 min-w-[20px] text-xs">
-                      {friendsCount}
-                    </Badge>
-                  )}
-                  {unreadFriends > 0 && (
-                    <Badge variant="destructive" className="px-1.5 py-0 h-5 min-w-[20px] text-xs">
-                      {unreadFriends > 99 ? '99+' : unreadFriends}
-                    </Badge>
-                  )}
-                </div>
+                {unreadFriends > 0 && (
+                  <Badge variant="destructive" className="ml-2 px-1.5 py-0 h-5 min-w-[20px] text-xs">
+                    {unreadFriends > 99 ? '99+' : unreadFriends}
+                  </Badge>
+                )}
               </TabsTrigger>
               <TabsTrigger value="profile" className="flex-1 text-base py-3">
                 <User className="w-5 h-5 mr-2" />
@@ -424,32 +364,24 @@ function MainApp() {
 
           <div className="flex-1 overflow-hidden">
             <TabsContent value="rooms" className="h-full m-0">
-              <Suspense fallback={<LoadingFallback />}>
-                <RoomList onSelectRoom={(room) => setSelectedRoom(room)} />
-              </Suspense>
+              <RoomList onSelectRoom={(room) => setSelectedRoom(room)} />
             </TabsContent>
 
             <TabsContent value="messages" className="h-full m-0">
-              <Suspense fallback={<LoadingFallback />}>
-                <DirectMessagesList onSelectDM={(dm) => setSelectedDM(dm)} />
-              </Suspense>
+              <DirectMessagesList onSelectDM={(dm) => setSelectedDM(dm)} />
             </TabsContent>
 
             <TabsContent value="friends" className="h-full m-0">
-              <Suspense fallback={<LoadingFallback />}>
-                <UserProfile 
-                  showFriendsTab={true}
-                  onOpenChat={(room) => setSelectedRoom(room)}
-                  onOpenDM={(dm) => setSelectedDM(dm)}
-                  onViewUser={(userId) => setViewingUserId(userId)}
-                />
-              </Suspense>
+              <UserProfile 
+                showFriendsTab={true}
+                onOpenChat={(room) => setSelectedRoom(room)}
+                onOpenDM={(dm) => setSelectedDM(dm)}
+                onViewUser={(userId) => setViewingUserId(userId)}
+              />
             </TabsContent>
 
             <TabsContent value="profile" className="h-full m-0">
-              <Suspense fallback={<LoadingFallback />}>
-                <UserProfile />
-              </Suspense>
+              <UserProfile />
             </TabsContent>
           </div>
         </Tabs>
@@ -473,9 +405,9 @@ export default function App() {
         <ConnectionProvider>
           <AuthProvider>
             <AchievementsProvider>
-              <SessionCryptoProvider>
+              <CryptoProvider>
                 <MainApp />
-              </SessionCryptoProvider>
+              </CryptoProvider>
             </AchievementsProvider>
           </AuthProvider>
         </ConnectionProvider>

@@ -19,51 +19,24 @@ const client = () => createClient(
 
 // Set stores a key-value pair in the database.
 export const set = async (key: string, value: any): Promise<void> => {
-  try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    
-    if (!supabaseUrl || !serviceRoleKey) {
-      throw new Error('SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set');
-    }
-    
-    const supabase = client()
-    const { error } = await supabase.from("kv_store_b0f1e6d5").upsert({
-      key,
-      value
-    });
-    if (error) {
-      console.error('KV store set error:', error);
-      throw new Error(`Database error: ${error.message}`);
-    }
-  } catch (err: any) {
-    console.error('KV store set exception:', err);
-    throw new Error(`Failed to save to database: ${err.message}`);
+  const supabase = client()
+  const { error } = await supabase.from("kv_store_b0f1e6d5").upsert({
+    key,
+    value
+  });
+  if (error) {
+    throw new Error(error.message);
   }
 };
 
 // Get retrieves a key-value pair from the database.
 export const get = async (key: string): Promise<any> => {
-  try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    
-    if (!supabaseUrl || !serviceRoleKey) {
-      console.error('SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set');
-      throw new Error('Database configuration missing');
-    }
-    
-    const supabase = client()
-    const { data, error } = await supabase.from("kv_store_b0f1e6d5").select("value").eq("key", key).maybeSingle();
-    if (error) {
-      console.error('KV store get error:', error);
-      throw new Error(`Database error: ${error.message}`);
-    }
-    return data?.value;
-  } catch (err: any) {
-    console.error('KV store get exception:', err);
-    throw new Error(`Failed to read from database: ${err.message}`);
+  const supabase = client()
+  const { data, error } = await supabase.from("kv_store_b0f1e6d5").select("value").eq("key", key).maybeSingle();
+  if (error) {
+    throw new Error(error.message);
   }
+  return data?.value;
 };
 
 // Delete deletes a key-value pair from the database.

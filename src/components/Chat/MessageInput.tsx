@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Message, storageAPI } from '../../utils/api';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
-import { X, Send, Mic, Video, BarChart3, Circle, Square, Paperclip, Camera, SwitchCamera, Image as ImageIcon, Smile } from '../ui/icons';
+import { X, Send, Mic, Video, BarChart3, Circle, Square, Paperclip, Camera, SwitchCamera, Image as ImageIcon, Smile, Mail } from '../ui/icons';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -72,7 +72,12 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
   const [isAnonymousPoll, setIsAnonymousPoll] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ show: boolean; message: string }>({ show: false, message: '' });
   const [showAttachMenu, setShowAttachMenu] = useState(false);
-  const [showAttachDialog, setShowAttachDialog] = useState(false);
+  const [showAdvancedAttachMenu, setShowAdvancedAttachMenu] = useState(false);
+
+  // Логирование для отладки
+  useEffect(() => {
+    console.log('Menu state changed:', { showAttachMenu, showAdvancedAttachMenu });
+  }, [showAttachMenu, showAdvancedAttachMenu]);
   const [showEmojiMenu, setShowEmojiMenu] = useState(false);
   const [emojiPickerPosition, setEmojiPickerPosition] = useState({ x: 0, y: 0 });
   const [showMentionSuggestions, setShowMentionSuggestions] = useState(false);
@@ -80,9 +85,38 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
   const [mentionSuggestions, setMentionSuggestions] = useState<User[]>([]);
   const [mentionPosition, setMentionPosition] = useState({ start: 0, end: 0 });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const attachButtonRef = useRef<HTMLButtonElement>(null);
+  const attachMenuRef = useRef<HTMLDivElement>(null);
+  const attachAdvancedMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
+  const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const longPressTriggeredRef = useRef(false);
+
+  // Закрытие меню по клику/тачу вне
+  useEffect(() => {
+    const handleOutside = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node;
+      if (
+        attachMenuRef.current?.contains(target) ||
+        attachAdvancedMenuRef.current?.contains(target) ||
+        attachButtonRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setShowAttachMenu(false);
+      setShowAdvancedAttachMenu(false);
+    };
+    if (showAttachMenu || showAdvancedAttachMenu) {
+      document.addEventListener('mousedown', handleOutside);
+      document.addEventListener('touchstart', handleOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('touchstart', handleOutside);
+    };
+  }, [showAttachMenu, showAdvancedAttachMenu]);
 
   // Состояния для записи аудио
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
@@ -135,6 +169,37 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
       videoRef.current.srcObject = null;
     }
   }, [showVideoDialog]);
+
+  // Закрываем меню прикрепления по клику вне его
+  useEffect(() => {
+    if (!showAttachMenu && !showAdvancedAttachMenu) return;
+
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node;
+      
+      // Проверяем, что клик был не по кнопке скрепки и не внутри меню
+      if (
+        attachButtonRef.current?.contains(target) ||
+        attachMenuRef.current?.contains(target) ||
+        attachAdvancedMenuRef.current?.contains(target)
+      ) {
+        return;
+      }
+      
+      // Закрываем меню
+      setShowAttachMenu(false);
+      setShowAdvancedAttachMenu(false);
+    };
+
+    // Добавляем обработчики
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [showAttachMenu, showAdvancedAttachMenu]);
 
   const handleSend = () => {
     if (!content.trim() || disabled) return;
@@ -228,6 +293,37 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
       console.error('Ошибка поиска пользователей для меншена:', error);
       setMentionSuggestions([]);
     }
+  };
+
+  // Вычисляем позицию меню относительно кнопки скрепки (одинаковая для обоих меню)
+  const computeMenuPosition = () => {
+    if (!attachButtonRef.current) return {};
+    
+    const buttonRect = attachButtonRef.current.getBoundingClientRect();
+    const menuWidth = 200;
+    const menuHeight = 120; // Примерная высота меню
+    
+    // Позиционируем меню выше кнопки, по центру
+    let top = buttonRect.top - menuHeight - 12;
+    let left = buttonRect.left - (menuWidth / 2) + (buttonRect.width / 2);
+    
+    // Проверяем границы экрана
+    if (top < 10) {
+      // Если не помещается сверху, показываем снизу
+      top = buttonRect.bottom + 8;
+    }
+    
+    if (left < 10) {
+      left = 10;
+    } else if (left + menuWidth > window.innerWidth - 10) {
+      left = window.innerWidth - menuWidth - 10;
+    }
+    
+    return {
+      top: `${top}px`,
+      left: `${left}px`,
+      width: `${menuWidth}px`,
+    };
   };
 
   const handleSelectMention = (user: User) => {
@@ -391,7 +487,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
       mediaRecorder.start();
       setIsRecordingAudio(true);
       setShowAttachMenu(false);
-      setShowAttachDialog(false);
+      setShowAdvancedAttachMenu(false);
       
       // Запускаем таймер
       audioTimerRef.current = setInterval(() => {
@@ -458,11 +554,11 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
       audioStreamRef.current = null;
     }
     
-    setIsRecordingAudio(false);
-    audioChunksRef.current = [];
-    setAudioRecordingTime(0);
-    if (audioTimerRef.current) {
-      clearInterval(audioTimerRef.current);
+      setIsRecordingAudio(false);
+      audioChunksRef.current = [];
+      setAudioRecordingTime(0);
+      if (audioTimerRef.current) {
+        clearInterval(audioTimerRef.current);
       audioTimerRef.current = null;
     }
   };
@@ -546,7 +642,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
 
       // Диалог уже открыт выше, просто запускаем запись
       setShowAttachMenu(false);
-      setShowAttachDialog(false);
+      setShowAdvancedAttachMenu(false);
       setIsRecordingVideo(true);
       mediaRecorder.start();
       
@@ -692,12 +788,164 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
 
   const handleFileSelect = (type: 'file' | 'camera') => {
     if (type === 'camera') {
-      cameraInputRef.current?.click();
+      // Запускаем камеру для съемки фото
+      startCameraCapture();
     } else {
       fileInputRef.current?.click();
     }
     setShowAttachMenu(false);
-    setShowAttachDialog(false);
+    setShowAdvancedAttachMenu(false);
+  };
+
+  // Функция для захвата фото с камеры
+  const startCameraCapture = async () => {
+    try {
+      let currentFacingMode: 'user' | 'environment' = 'user';
+      
+      // Запрашиваем доступ к камере
+      let stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: currentFacingMode },
+        audio: false 
+      });
+      
+      // Создаем элемент video для превью
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      video.autoplay = true;
+      video.playsInline = true;
+      
+      // Создаем canvas для захвата кадра
+      const canvas = document.createElement('canvas');
+      
+      // Ждем пока видео загрузится
+      await new Promise((resolve) => {
+        video.onloadedmetadata = () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          resolve(null);
+        };
+      });
+      
+      // Функция переключения камеры
+      const switchCamera = async () => {
+        try {
+          // Останавливаем текущий поток
+          stream.getTracks().forEach(track => track.stop());
+          
+          // Переключаем режим
+          currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+          
+          // Запрашиваем новый поток
+          stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: currentFacingMode },
+            audio: false 
+          });
+          
+          video.srcObject = stream;
+          
+          // Обновляем размеры canvas
+          await new Promise((resolve) => {
+            video.onloadedmetadata = () => {
+              canvas.width = video.videoWidth;
+              canvas.height = video.videoHeight;
+              resolve(null);
+            };
+          });
+        } catch (error) {
+          console.error('Error switching camera:', error);
+          toast.error('Не удалось переключить камеру');
+        }
+      };
+      
+      // Показываем превью с кнопками
+      const capturePhoto = () => {
+        return new Promise<Blob>((resolve, reject) => {
+          // Рисуем текущий кадр на canvas
+          const context = canvas.getContext('2d');
+          if (!context) {
+            reject(new Error('Не удалось создать context'));
+            return;
+          }
+          context.drawImage(video, 0, 0, canvas.width, canvas.height);
+          
+          // Конвертируем canvas в blob
+          canvas.toBlob((blob) => {
+            if (blob) {
+              resolve(blob);
+            } else {
+              reject(new Error('Не удалось создать изображение'));
+            }
+          }, 'image/jpeg', 0.9);
+        });
+      };
+      
+      // Создаем временное модальное окно для превью
+      const modal = document.createElement('div');
+      modal.style.cssText = 'position: fixed; inset: 0; z-index: 9999; background: rgba(0,0,0,0.9); display: flex; flex-direction: column; align-items: center; justify-content: center;';
+      
+      video.style.cssText = 'max-width: 90vw; max-height: 70vh; border-radius: 12px;';
+      modal.appendChild(video);
+      
+      const buttonContainer = document.createElement('div');
+      buttonContainer.style.cssText = 'display: flex; gap: 16px; margin-top: 24px;';
+      
+      const switchBtn = document.createElement('button');
+      switchBtn.textContent = '🔄 Переключить';
+      switchBtn.style.cssText = 'padding: 12px 24px; background: #8b5cf6; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px;';
+      switchBtn.onclick = switchCamera;
+      
+      const captureBtn = document.createElement('button');
+      captureBtn.textContent = '📸 Сделать фото';
+      captureBtn.style.cssText = 'padding: 12px 24px; background: #3b82f6; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px;';
+      
+      const cancelBtn = document.createElement('button');
+      cancelBtn.textContent = '✖️ Отмена';
+      cancelBtn.style.cssText = 'padding: 12px 24px; background: #ef4444; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 16px;';
+      
+      buttonContainer.appendChild(switchBtn);
+      buttonContainer.appendChild(captureBtn);
+      buttonContainer.appendChild(cancelBtn);
+      modal.appendChild(buttonContainer);
+      
+      document.body.appendChild(modal);
+      
+      // Обработчики кнопок
+      captureBtn.onclick = async () => {
+        try {
+          const photoBlob = await capturePhoto();
+          
+          // Останавливаем поток
+          stream.getTracks().forEach(track => track.stop());
+          document.body.removeChild(modal);
+          
+          // Загружаем фото
+          const photoFile = new File([photoBlob], `photo-${Date.now()}.jpg`, { type: 'image/jpeg' });
+          
+          setUploadProgress({ show: true, message: 'Сжатие изображения...' });
+          const compressedFile = await compressImage(photoFile);
+          
+          setUploadProgress({ show: true, message: 'Загрузка фото...' });
+          const { url } = await storageAPI.uploadFile(compressedFile);
+          
+          onSend(`![image](${url})`, 'text', replyingTo?.id);
+          setUploadProgress({ show: false, message: '' });
+          toast.success('Фото отправлено');
+        } catch (error: any) {
+          console.error('Error capturing photo:', error);
+          toast.error(error.message || 'Ошибка захвата фото');
+          setUploadProgress({ show: false, message: '' });
+        }
+      };
+      
+      cancelBtn.onclick = () => {
+        stream.getTracks().forEach(track => track.stop());
+        document.body.removeChild(modal);
+      };
+      
+    } catch (error: any) {
+      console.error('Error accessing camera:', error);
+      toast.error(error.message || 'Не удалось получить доступ к камере');
+    }
   };
 
   const handleAddEmoji = (emoji: any) => {
@@ -815,27 +1063,23 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
             </div>
           </div>
           <div className="flex gap-2">
-            <Button 
-              variant="ghost" 
-              size="sm" 
+            <button
               onClick={cancelAudioRecording}
-              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              className="h-9 w-9 rounded-full hover:bg-destructive/10 active:bg-destructive/20 text-destructive transition-all duration-200 inline-flex items-center justify-center"
             >
-              <X className="w-4 h-4" />
-            </Button>
-            <Button 
-              variant="default" 
-              size="sm" 
+              <X className="w-5 h-5" />
+            </button>
+            <button
               onClick={stopAudioRecording}
-              className="bg-primary hover:bg-primary/90"
+              className="h-9 w-9 rounded-full bg-primary hover:bg-primary/90 active:scale-95 shadow-lg hover:shadow-primary/50 transition-all duration-200 inline-flex items-center justify-center ring-2 ring-primary/20"
             >
-              <Send className="w-4 h-4" />
-            </Button>
+              <Mail className="w-4 h-4 text-primary-foreground" />
+            </button>
           </div>
         </div>
       )}
 
-      <div className="flex gap-2 items-end">
+      <div className="flex gap-3 items-end px-4 py-3 bg-background/95 backdrop-blur-xl border-t border-border/50">
         {/* Скрытые inputs для файлов */}
         <input
           ref={fileInputRef}
@@ -853,19 +1097,79 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
           capture="environment"
         />
 
-        {/* Поле ввода в стиле Telegram - улучшенный дизайн */}
-        <div className="flex-1 relative flex items-end bg-muted/50 backdrop-blur-sm rounded-3xl border border-border/40 shadow-sm hover:border-border/60 focus-within:border-primary/50 focus-within:shadow-md transition-all duration-300">
-          {/* Кнопка скрепки слева внутри поля */}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setShowAttachDialog(true)}
+        {/* Модернизированное поле ввода */}
+        <div className="flex-1 relative flex items-center gap-2 bg-muted/30 backdrop-blur-sm rounded-[24px] border-2 border-border/40 shadow-sm hover:border-primary/40 focus-within:border-primary focus-within:shadow-lg focus-within:scale-[1.01] transition-all duration-300 px-1 py-1">
+          {/* Кнопка скрепки - поднята выше */}
+          <button
+            ref={attachButtonRef}
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              console.log('Mouse down on attach button');
+              longPressTriggeredRef.current = false;
+              longPressTimerRef.current = setTimeout(() => {
+                console.log('Long press triggered - showing advanced menu');
+                longPressTriggeredRef.current = true;
+                setShowAttachMenu(false);
+                setShowAdvancedAttachMenu(true);
+              }, 450);
+            }}
+            onMouseUp={(e) => {
+              e.preventDefault();
+              console.log('Mouse up on attach button');
+              if (longPressTimerRef.current) {
+                clearTimeout(longPressTimerRef.current);
+              }
+            }}
+            onMouseLeave={(e) => {
+              console.log('Mouse leave attach button');
+              if (longPressTimerRef.current) {
+                clearTimeout(longPressTimerRef.current);
+              }
+            }}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              console.log('Touch start on attach button');
+              longPressTriggeredRef.current = false;
+              longPressTimerRef.current = setTimeout(() => {
+                console.log('Long press (touch) triggered - showing advanced menu');
+                longPressTriggeredRef.current = true;
+                setShowAttachMenu(false);
+                setShowAdvancedAttachMenu(true);
+              }, 450);
+            }}
+            onTouchEnd={(e) => {
+              e.preventDefault();
+              console.log('Touch end on attach button, longPress:', longPressTriggeredRef.current);
+              if (longPressTimerRef.current) {
+                clearTimeout(longPressTimerRef.current);
+              }
+              // Если был long press, не обрабатываем короткое нажатие
+              if (longPressTriggeredRef.current) return;
+              // Короткое нажатие - обычное меню
+              console.log('Short tap - toggling attach menu');
+              setShowAdvancedAttachMenu(false);
+              setShowAttachMenu((v) => !v);
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              console.log('Click on attach button, longPress:', longPressTriggeredRef.current);
+              // Если был сработан long-press, не обрабатываем клик
+              if (longPressTriggeredRef.current) {
+                longPressTriggeredRef.current = false;
+                return;
+              }
+              // Для мыши - переключаем обычное меню
+              console.log('Short click - toggling attach menu');
+              setShowAdvancedAttachMenu(false);
+              setShowAttachMenu((v) => !v);
+            }}
             disabled={disabled || isRecordingAudio || isRecordingVideo}
             title="Прикрепить"
-            className="shrink-0 h-11 w-11 rounded-l-3xl hover:bg-muted/80 transition-colors"
+            className="shrink-0 h-10 w-10 rounded-full hover:bg-primary/10 active:bg-primary/20 transition-all duration-200 inline-flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none group"
           >
-            <Paperclip className="w-5 h-5" />
-          </Button>
+            <Paperclip className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+          </button>
 
           {/* Поле ввода текста */}
           <Textarea
@@ -874,57 +1178,58 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
             onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder={disabled ? "Вы не можете отправлять сообщения" : "Сообщение..."}
+            placeholder={disabled ? "Вы не можете отправлять сообщения" : "Введите сообщение..."}
             disabled={disabled || isRecordingAudio}
-            className="flex-1 min-h-[44px] max-h-[200px] resize-none px-3 py-2.5 border-0 bg-transparent focus:ring-0 focus-visible:ring-0 text-base placeholder:text-muted-foreground/60"
+            className="flex-1 min-h-[40px] max-h-[160px] resize-none px-3 py-2 border-0 bg-transparent focus:ring-0 focus-visible:ring-0 text-[15px] leading-relaxed placeholder:text-muted-foreground/50 scrollbar-thin"
             rows={1}
           />
 
-          {/* Кнопка эмодзи справа внутри поля */}
-          <Button
-            ref={emojiButtonRef}
-            variant="ghost"
-            size="icon"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (emojiButtonRef.current) {
-                const rect = emojiButtonRef.current.getBoundingClientRect();
-                // Передаем правый нижний угол кнопки
-                setEmojiPickerPosition({
-                  x: rect.right,
-                  y: rect.bottom
-                });
-              }
-              setShowEmojiMenu((v) => !v);
-            }}
-            disabled={disabled || isRecordingAudio || isRecordingVideo}
-            title="Эмодзи"
-            className="shrink-0 h-11 w-11 hover:bg-muted/80 transition-colors"
-          >
-            <Smile className="w-5 h-5" />
-          </Button>
+          {/* Правая группа кнопок */}
+          <div className="flex items-center gap-1 shrink-0">
+            {/* Кнопка эмодзи */}
+            <button
+              ref={emojiButtonRef}
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (emojiButtonRef.current) {
+                  const rect = emojiButtonRef.current.getBoundingClientRect();
+                  setEmojiPickerPosition({
+                    x: rect.right,
+                    y: rect.bottom
+                  });
+                }
+                setShowEmojiMenu((v) => !v);
+              }}
+              disabled={disabled || isRecordingAudio || isRecordingVideo}
+              title="Эмодзи"
+              className="shrink-0 h-10 w-10 rounded-full hover:bg-primary/10 active:bg-primary/20 transition-all duration-200 inline-flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none group"
+            >
+              <Smile className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+            </button>
 
-          {/* Кнопка отправки справа внутри поля (если есть текст) или кнопка микрофона */}
-          {content.trim() ? (
-            <Button
-              onClick={handleSend}
-              disabled={disabled || isRecordingAudio}
-              size="icon"
-              className="shrink-0 h-11 w-11 rounded-r-3xl bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm hover:shadow-md transition-all"
-            >
-              <Send className="w-5 h-5" />
-            </Button>
-          ) : (
-            <Button
-              onClick={startAudioRecording}
-              disabled={disabled || isRecordingVideo || isRecordingAudio}
-              size="icon"
-              className="shrink-0 h-11 w-11 rounded-r-3xl hover:bg-muted/80 transition-colors"
-              title="Голосовое сообщение"
-            >
-              <Mic className="w-5 h-5" />
-            </Button>
-          )}
+            {/* Кнопка отправки или микрофона */}
+            {content.trim() ? (
+              <button
+                type="button"
+                onClick={handleSend}
+                disabled={disabled || isRecordingAudio}
+                className="shrink-0 h-10 w-10 rounded-full bg-primary hover:bg-primary/90 active:scale-95 shadow-lg hover:shadow-primary/50 transition-all duration-200 inline-flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none ring-2 ring-primary/20"
+              >
+                <Mail className="w-5 h-5 text-primary-foreground" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={startAudioRecording}
+                disabled={disabled || isRecordingVideo || isRecordingAudio}
+                title="Голосовое сообщение"
+                className="shrink-0 h-10 w-10 rounded-full hover:bg-primary/10 active:bg-primary/20 transition-all duration-200 inline-flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none group"
+              >
+                <Mic className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -939,6 +1244,94 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
           position={emojiPickerPosition}
         />
       )}
+
+      {/* Мини-меню прикрепления (клик) - одинаковое позиционирование */}
+      {showAttachMenu && attachButtonRef.current && (() => {
+        console.log('Rendering attach menu at position:', computeMenuPosition());
+        return (
+        <div
+          ref={attachMenuRef}
+          className="fixed z-[100]"
+          style={computeMenuPosition()}
+        >
+          <div className="relative bg-background/80 backdrop-blur-2xl border border-border/50 shadow-2xl rounded-2xl p-2 flex flex-col gap-1 animate-context-menu-pop overflow-hidden">
+            {/* Эффект стекла - дополнительный слой */}
+            <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent pointer-events-none" />
+            
+            <button
+              onClick={() => {
+                console.log('Camera button clicked');
+                setShowAttachMenu(false);
+                handleFileSelect('camera');
+              }}
+              className="relative flex items-center gap-3 px-4 py-3 hover:bg-primary/10 rounded-xl transition-all duration-200 text-left group"
+            >
+              <div className="w-9 h-9 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors">
+                <Camera className="w-5 h-5 text-primary" />
+              </div>
+              <span className="font-medium">Камера</span>
+            </button>
+            <button
+              onClick={() => {
+                console.log('File button clicked');
+                setShowAttachMenu(false);
+                handleFileSelect('file');
+              }}
+              className="relative flex items-center gap-3 px-4 py-3 hover:bg-primary/10 rounded-xl transition-all duration-200 text-left group"
+            >
+              <div className="w-9 h-9 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors">
+                <Paperclip className="w-5 h-5 text-primary" />
+              </div>
+              <span className="font-medium">Галерея</span>
+            </button>
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* Расширенное меню прикрепления (long press) - одинаковое позиционирование */}
+      {showAdvancedAttachMenu && attachButtonRef.current && (() => {
+        console.log('Rendering advanced attach menu at position:', computeMenuPosition());
+        return (
+        <div
+          ref={attachAdvancedMenuRef}
+          className="fixed z-[100]"
+          style={computeMenuPosition()}
+        >
+          <div className="relative bg-background/80 backdrop-blur-2xl border border-border/50 shadow-2xl rounded-2xl p-2 flex flex-col gap-1 animate-context-menu-pop overflow-hidden">
+            {/* Эффект стекла - дополнительный слой */}
+            <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent pointer-events-none" />
+            
+            <button
+              onClick={() => {
+                console.log('Video button clicked');
+                setShowAdvancedAttachMenu(false);
+                startVideoRecording();
+              }}
+              className="relative flex items-center gap-3 px-4 py-3 hover:bg-primary/10 rounded-xl transition-all duration-200 text-left group"
+            >
+              <div className="w-9 h-9 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors">
+                <Video className="w-5 h-5 text-primary" />
+              </div>
+              <span className="font-medium">Видео</span>
+            </button>
+            <button
+              onClick={() => {
+                console.log('Poll button clicked');
+                setShowAdvancedAttachMenu(false);
+                setShowPollDialog(true);
+              }}
+              className="relative flex items-center gap-3 px-4 py-3 hover:bg-primary/10 rounded-xl transition-all duration-200 text-left group"
+            >
+              <div className="w-9 h-9 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors">
+                <BarChart3 className="w-5 h-5 text-primary" />
+              </div>
+              <span className="font-medium">Опрос</span>
+            </button>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* Подсказки меншенов */}
       {showMentionSuggestions && mentionSuggestions.length > 0 && textareaRef.current && (
@@ -1112,51 +1505,6 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
         </DialogContent>
       </Dialog>
 
-      {/* Диалог прикрепления файлов */}
-      <Dialog open={showAttachDialog} onOpenChange={setShowAttachDialog}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Прикрепить</DialogTitle>
-          </DialogHeader>
-          <div className="grid grid-cols-2 gap-3 py-4">
-            <Button
-              variant="outline"
-              className="h-24 flex-col gap-2"
-              onClick={() => handleFileSelect('camera')}
-            >
-              <Camera className="w-8 h-8" />
-              <span className="text-sm">Отправить фото</span>
-            </Button>
-            <Button
-              variant="outline"
-              className="h-24 flex-col gap-2"
-              onClick={() => handleFileSelect('file')}
-            >
-              <Paperclip className="w-8 h-8" />
-              <span className="text-sm">Прикрепить файл</span>
-            </Button>
-            <Button
-              variant="outline"
-              className="h-24 flex-col gap-2"
-              onClick={startVideoRecording}
-            >
-              <Video className="w-8 h-8" />
-              <span className="text-sm">Записать кружок</span>
-            </Button>
-            <Button
-              variant="outline"
-              className="h-24 flex-col gap-2 col-span-2"
-              onClick={() => {
-                setShowPollDialog(true);
-                setShowAttachDialog(false);
-              }}
-            >
-              <BarChart3 className="w-8 h-8" />
-              <span className="text-sm">Опрос</span>
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

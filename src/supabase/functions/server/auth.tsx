@@ -68,19 +68,8 @@ export async function signup(email: string, password: string, username: string) 
     }
 
     // Check if user already exists in Supabase Auth
-    let existingAuthUser = null;
-    try {
-      const { data: existingAuthUsers, error: listError } = await supabaseAdmin.auth.admin.listUsers();
-      if (listError) {
-        console.error('Error listing users:', listError);
-        // Continue with signup - we'll catch duplicate email error later
-      } else {
-        existingAuthUser = existingAuthUsers?.users?.find(u => u.email === email);
-      }
-    } catch (err: any) {
-      console.error('Exception listing users:', err);
-      // Continue with signup - we'll catch duplicate email error later
-    }
+    const { data: existingAuthUsers } = await supabaseAdmin.auth.admin.listUsers();
+    const existingAuthUser = existingAuthUsers?.users?.find(u => u.email === email);
 
     if (existingAuthUser) {
       console.log('User exists in Auth, checking KV store...');
@@ -112,12 +101,6 @@ export async function signup(email: string, password: string, username: string) 
 
     if (error) {
       console.error('Supabase createUser error:', error);
-      // Check for specific error types
-      if (error.message?.includes('User already registered') || 
-          error.message?.includes('already exists') ||
-          error.message?.includes('already registered')) {
-        return { error: 'Пользователь с таким email уже существует. Попробуйте войти в систему.' };
-      }
       return { error: `Ошибка создания пользователя: ${error.message}` };
     }
 
@@ -673,33 +656,12 @@ export async function getFriends(userId: string) {
       return [];
     }
 
-    // Считаем друзей в обе стороны:
-    // 1. Пользователи, которых я добавил в друзья (user.friends)
-    // 2. Пользователи, которые добавили меня в друзья (проверяем всех пользователей)
-    const friendIds = new Set<string>();
-    
-    // Добавляем друзей из моего списка
-    if (user.friends && user.friends.length > 0) {
-      user.friends.forEach(friendId => friendIds.add(friendId));
-    }
-    
-    // Проверяем всех пользователей, у которых я в списке друзей
-    const allUsers = await kv.getByPrefix('user:');
-    for (const otherUser of allUsers) {
-      if (otherUser.id === userId || otherUser.deleted) {
-        continue;
-      }
-      if (otherUser.friends && otherUser.friends.includes(userId)) {
-        friendIds.add(otherUser.id);
-      }
-    }
-
-    if (friendIds.size === 0) {
+    if (!user.friends || user.friends.length === 0) {
       return [];
     }
 
     const friends: User[] = [];
-    for (const friendId of friendIds) {
+    for (const friendId of user.friends) {
       const friend = await kv.get(`user:${friendId}`) as User;
       // Не включаем удаленных пользователей
       if (friend && !friend.deleted) {

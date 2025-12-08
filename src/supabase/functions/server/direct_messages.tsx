@@ -375,7 +375,7 @@ export async function markDMAsRead(dmId: string, userId: string): Promise<{ data
 }
 
 // Удалить DM (мягкое удаление - скрывает для пользователя)
-export async function deleteDM(dmId: string, userId: string): Promise<{ data?: { success: boolean }; error?: string }> {
+export async function deleteDM(dmId: string, userId: string): Promise<{ data?: { success: boolean; deletedMessages?: number; deletedNotifications?: number }; error?: string }> {
   try {
     if (!dmId || !userId) {
       return { error: 'Некорректные параметры' };
@@ -393,11 +393,45 @@ export async function deleteDM(dmId: string, userId: string): Promise<{ data?: {
       return { error: 'Вы не являетесь участником чата' };
     }
 
+    // Мягкое удаление всех сообщений этого DM
+    const allMessages = await kv.getByPrefix('message:');
+    let deletedMessagesCount = 0;
+    for (const item of allMessages) {
+      const message = item.value;
+      // Проверяем, что сообщение принадлежит этому DM (room_id === dmId)
+      if (message && message.room_id === dmId && !message.deleted) {
+        // Мягкое удаление - помечаем сообщение как удаленное
+        message.deleted = true;
+        message.deleted_at = new Date().toISOString();
+        message.deleted_by = userId;
+        await kv.set(item.key, message);
+        deletedMessagesCount++;
+      }
+    }
+    console.log(`Soft deleted ${deletedMessagesCount} messages from DM ${dmId}`);
+
+    // Мягкое удаление всех уведомлений, связанных с этим DM
+    const allNotifications = await kv.getByPrefix('notification:');
+    let deletedNotificationsCount = 0;
+    for (const item of allNotifications) {
+      const notification = item.value;
+      // Проверяем, что уведомление связано с этим DM (может быть через room_id или dm_id)
+      if (notification && (notification.room_id === dmId || notification.dm_id === dmId) && !notification.deleted) {
+        // Мягкое удаление - помечаем уведомление как удаленное
+        notification.deleted = true;
+        notification.deleted_at = new Date().toISOString();
+        notification.deleted_by = userId;
+        await kv.set(item.key, notification);
+        deletedNotificationsCount++;
+      }
+    }
+    console.log(`Soft deleted ${deletedNotificationsCount} notifications from DM ${dmId}`);
+
     // Сохраняем информацию о том, что пользователь удалил чат
     const hiddenKey = `dm_hidden:${dmId}:${userId}`;
     await kv.set(hiddenKey, { hidden_at: new Date().toISOString() });
 
-    return { data: { success: true } };
+    return { data: { success: true, deletedMessages: deletedMessagesCount, deletedNotifications: deletedNotificationsCount } };
   } catch (err: any) {
     console.error('Error deleting DM:', err);
     return { error: `Ошибка удаления чата: ${err?.message || 'Unknown error'}` };

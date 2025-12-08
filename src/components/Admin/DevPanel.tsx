@@ -3,7 +3,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { toast } from '../ui/sonner';
-import { supabaseUrl, publicAnonKey } from '../../utils/supabase/info';
+import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { Trash2, RefreshCw, CheckCircle, XCircle, Database } from '../ui/icons';
 import { adminAPI } from '../../utils/api';
 
@@ -35,7 +35,7 @@ export function DevPanel() {
     try {
       console.log('Checking server health...');
       const response = await fetch(
-        `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/make-server-b0f1e6d5/health`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-b0f1e6d5/health`,
         {
           headers: {
             'Authorization': `Bearer ${publicAnonKey}`,
@@ -71,7 +71,7 @@ export function DevPanel() {
     try {
       const token = localStorage.getItem('access_token');
       const response = await fetch(
-        `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/make-server-b0f1e6d5/auth/list-users`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-b0f1e6d5/auth/list-users`,
         {
           headers: {
             'Authorization': `Bearer ${token || publicAnonKey}`,
@@ -103,7 +103,7 @@ export function DevPanel() {
     try {
       console.log('Creating test user...');
       const response = await fetch(
-        `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/make-server-b0f1e6d5/auth/signup`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-b0f1e6d5/auth/signup`,
         {
           method: 'POST',
           headers: {
@@ -170,7 +170,7 @@ export function DevPanel() {
 
     try {
       const response = await fetch(
-        `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/make-server-b0f1e6d5/auth/delete-user/${encodeURIComponent(targetEmail)}`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-b0f1e6d5/auth/delete-user/${encodeURIComponent(targetEmail)}`,
         {
           method: 'DELETE',
           headers: {

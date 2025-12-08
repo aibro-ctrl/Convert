@@ -125,8 +125,8 @@ export async function getRooms(userId: string, godModeEnabled: boolean = false) 
           room.unread_count = {};
         }
         return {
-          ...room,
-          isGodMode: !room.members.includes(userId)
+        ...room,
+        isGodMode: !room.members.includes(userId)
         };
       });
     }
@@ -372,7 +372,7 @@ export async function unpinMessage(roomId: string, messageId: string, userId: st
         // Удаляем его из истории, так как оно теперь текущее
         room.pinned_message_ids = room.pinned_message_ids.slice(0, -1);
       } else {
-        delete room.pinned_message_id;
+    delete room.pinned_message_id;
       }
     }
 
@@ -479,33 +479,41 @@ export async function deleteRoom(roomId: string, userId: string) {
       
       if (!canDelete) {
         console.error(`User ${userId} (role: ${user?.role}) cannot delete room ${roomId} (created_by: ${room.created_by})`);
-        return { error: 'Недостаточно прав для удаления комнаты' };
-      }
+      return { error: 'Недостаточно прав для удаления комнаты' };
+    }
     }
 
-    // Удаляем все сообщения этой комнаты
+    // Мягкое удаление всех сообщений этой комнаты
     const allMessages = await kv.getByPrefix('message:');
     let deletedMessagesCount = 0;
     for (const item of allMessages) {
       const message = item.value;
-      if (message && message.room_id === roomId) {
-        await kv.del(item.key);
+      if (message && message.room_id === roomId && !message.deleted) {
+        // Мягкое удаление - помечаем сообщение как удаленное
+        message.deleted = true;
+        message.deleted_at = new Date().toISOString();
+        message.deleted_by = userId;
+        await kv.set(item.key, message);
         deletedMessagesCount++;
       }
     }
-    console.log(`Deleted ${deletedMessagesCount} messages from room ${roomId}`);
+    console.log(`Soft deleted ${deletedMessagesCount} messages from room ${roomId}`);
 
-    // Удаляем все уведомления, связанные с этой комнатой
+    // Мягкое удаление всех уведомлений, связанных с этой комнатой
     const allNotifications = await kv.getByPrefix('notification:');
     let deletedNotificationsCount = 0;
     for (const item of allNotifications) {
       const notification = item.value;
-      if (notification && notification.room_id === roomId) {
-        await kv.del(item.key);
+      if (notification && notification.room_id === roomId && !notification.deleted) {
+        // Мягкое удаление - помечаем уведомление как удаленное
+        notification.deleted = true;
+        notification.deleted_at = new Date().toISOString();
+        notification.deleted_by = userId;
+        await kv.set(item.key, notification);
         deletedNotificationsCount++;
       }
     }
-    console.log(`Deleted ${deletedNotificationsCount} notifications from room ${roomId}`);
+    console.log(`Soft deleted ${deletedNotificationsCount} notifications from room ${roomId}`);
 
     // Мягкое удаление - помечаем комнату как удаленную
     room.deleted = true;
@@ -513,7 +521,7 @@ export async function deleteRoom(roomId: string, userId: string) {
     room.deleted_by = userId;
     
     await kv.set(`room:${roomId}`, room);
-    
+
     console.log(`Room ${roomId} (${room.name}) deleted by user ${userId} (${user?.username}). Deleted ${deletedMessagesCount} messages and ${deletedNotificationsCount} notifications`);
 
     return { data: { success: true, deletedMessages: deletedMessagesCount, deletedNotifications: deletedNotificationsCount } };
