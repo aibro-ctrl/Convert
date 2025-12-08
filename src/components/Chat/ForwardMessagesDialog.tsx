@@ -5,7 +5,7 @@ import { Input } from '../ui/input';
 import { ScrollArea } from '../ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 import { Checkbox } from '../ui/checkbox';
-import { roomsAPI, directMessagesAPI, Message, Room, DirectMessage } from '../../utils/api';
+import { roomsAPI, dmAPI, Message, Room, DirectMessage } from '../../utils/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { fixMediaUrl } from '../../utils/urlFix';
 import { toast } from '../ui/sonner';
@@ -42,7 +42,7 @@ export function ForwardMessagesDialog({
     try {
       const [roomsData, dmsData] = await Promise.all([
         roomsAPI.getUserRooms(),
-        directMessagesAPI.getUserDMs()
+        dmAPI.getAll()
       ]);
       setRooms(roomsData || []);
       setDms(dmsData || []);
@@ -88,7 +88,7 @@ export function ForwardMessagesDialog({
             // Forward to DM
             const forwardContent = `[Forwarded]\n${message.content}`;
             forwardPromises.push(
-              directMessagesAPI.sendMessage(targetId, forwardContent, message.type)
+              dmAPI.sendMessage(targetId, forwardContent, message.type)
             );
           }
         }
@@ -261,3 +261,4 @@ export function ForwardMessagesDialog({
     </Dialog>
   );
 }
+
