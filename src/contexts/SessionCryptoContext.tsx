@@ -168,4 +168,3 @@ function isMediaUrl(content: string): boolean {
   return mediaPatterns.some(pattern => pattern.test(trimmed));
 }
 
-

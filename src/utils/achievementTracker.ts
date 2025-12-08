@@ -195,10 +195,31 @@ export class AchievementTracker {
     }
   }
 
-  // Друзья
+  // Друзья - проверяем текущее количество друзей
   async checkFriendsCount(count: number) {
-    if (count >= 50) {
-      await this.unlock('chips_pretzel');
+    try {
+      // Получаем текущее состояние ачивки
+      const achievementData = await fetchAPI(`/achievements/${this.userId}`);
+      
+      if (achievementData.achievements && achievementData.achievements.chips_pretzel) {
+        const chipsPretzel = achievementData.achievements.chips_pretzel;
+        
+        // Если ачивка уже разблокирована, не делаем ничего (она остается навсегда)
+        if (chipsPretzel.isUnlocked) {
+          return;
+        }
+      }
+      
+      // Если ачивка еще не разблокирована и друзей >= 50, разблокируем
+      if (count >= 50) {
+        await this.unlock('chips_pretzel');
+      }
+    } catch (error) {
+      console.error('Error checking friends count achievement:', error);
+      // Если не удалось проверить состояние, все равно пытаемся разблокировать при >= 50
+      if (count >= 50) {
+        await this.unlock('chips_pretzel');
+      }
     }
   }
 

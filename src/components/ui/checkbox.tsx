@@ -32,6 +32,17 @@ function Checkbox({
     onChange?.(e);
   };
 
+  const handleDivClick = (e: React.MouseEvent) => {
+    if (disabled) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const newChecked = !checkedState;
+    if (!isControlled) {
+      setIsChecked(newChecked);
+    }
+    onCheckedChange?.(newChecked);
+  };
+
   return (
     <div className="relative inline-flex items-center justify-center">
       <input
@@ -45,6 +56,20 @@ function Checkbox({
       <div
         data-slot="checkbox"
         data-state={checkedState ? "checked" : "unchecked"}
+        onClick={handleDivClick}
+        role="checkbox"
+        aria-checked={checkedState}
+        tabIndex={disabled ? -1 : 0}
+        onKeyDown={(e) => {
+          if ((e.key === 'Enter' || e.key === ' ') && !disabled) {
+            e.preventDefault();
+            const newChecked = !checkedState;
+            if (!isControlled) {
+              setIsChecked(newChecked);
+            }
+            onCheckedChange?.(newChecked);
+          }
+        }}
         className={cn(
           "peer border bg-input-background dark:bg-input/30 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground dark:data-[state=checked]:bg-primary data-[state=checked]:border-primary focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive size-4 shrink-0 rounded-[4px] border shadow-xs transition-shadow outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50",
           "flex items-center justify-center cursor-pointer",

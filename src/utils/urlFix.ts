@@ -1,77 +1,92 @@
-// URL fixing utilities for media files
+// Утилита для исправления URL файлов и видео
+// Заменяет неправильные хосты (например, kong:8000) на правильный адрес сервера
+
 import { supabaseUrl } from './supabase/info';
 
 /**
- * Fix media URLs to ensure they work correctly with Supabase storage
- * Handles both relative and absolute URLs
+ * Исправляет URL, заменяя неправильные хосты на правильный адрес сервера
+ * @param url - URL для исправления
+ * @returns Исправленный URL
  */
-export function fixMediaUrl(url: string | null | undefined): string {
+export function fixFileUrl(url: string | null | undefined): string {
   if (!url) return '';
   
-  // Already a full URL, return as is
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    return url;
-  }
-  
-  // Handle blob URLs (from local file uploads before upload)
-  if (url.startsWith('blob:')) {
-    return url;
-  }
-  
-  // Handle data URLs
-  if (url.startsWith('data:')) {
-    return url;
-  }
-  
-  // Remove leading slashes
-  const cleanUrl = url.replace(/^\/+/, '');
-  
-  // If it's a storage path, construct full Supabase storage URL
-  if (cleanUrl.startsWith('storage/v1/object/public/')) {
-    return `${supabaseUrl}/${cleanUrl}`;
-  }
-  
-  // If it's just a bucket path, add the storage prefix
-  const buckets = ['avatars', 'chat-media', 'attachments', 'audio', 'video', 'images'];
-  const startsWithBucket = buckets.some(bucket => cleanUrl.startsWith(bucket));
-  
-  if (startsWithBucket) {
-    return `${supabaseUrl}/storage/v1/object/public/${cleanUrl}`;
-  }
-  
-  // Default: assume it's relative to supabase URL
-  return `${supabaseUrl}/${cleanUrl}`;
-}
-
-/**
- * Extract bucket and path from a Supabase storage URL
- */
-export function parseStorageUrl(url: string): { bucket: string; path: string } | null {
   try {
-    const storageMatch = url.match(/storage\/v1\/object\/public\/([^/]+)\/(.+)/);
-    if (storageMatch) {
-      return {
-        bucket: storageMatch[1],
-        path: storageMatch[2],
-      };
+    // Сначала пытаемся простую замену для случаев, когда URL содержит kong:8000 или kong
+    if (url.includes('kong:8000') || url.includes('kong/') || url.includes('kong')) {
+      // Заменяем все варианты kong:8000 на правильный адрес
+      let fixed = url
+        .replace(/https?:\/\/kong:8000/g, supabaseUrl)
+        .replace(/https?:\/\/kong\//g, `${supabaseUrl}/`)
+        .replace(/https?:\/\/kong/g, supabaseUrl)
+        .replace(/kong:8000/g, supabaseUrl.replace(/^https?:\/\//, ''))
+        .replace(/\/\/kong\//g, `//${supabaseUrl.replace(/^https?:\/\//, '')}/`)
+        .replace(/\/\/kong/g, `//${supabaseUrl.replace(/^https?:\/\//, '')}`);
+      
+      // Если после замены все еще есть kong, пытаемся более агрессивную замену
+      if (fixed.includes('kong')) {
+        // Извлекаем путь и параметры из URL
+        const match = fixed.match(/(https?:\/\/)?kong(:8000)?(\/.*)/);
+        if (match) {
+          const path = match[3] || '';
+          fixed = `${supabaseUrl}${path}`;
+        }
+      }
+      
+      console.log('Fixed URL (kong replacement):', url, '->', fixed);
+      return fixed;
     }
-    return null;
-  } catch {
-    return null;
+    
+    // Пытаемся парсить как URL
+    const urlObj = new URL(url);
+    
+    // Если хост содержит "kong" или другие неправильные значения, заменяем на правильный
+    if (urlObj.hostname === 'kong' || urlObj.hostname.includes('kong')) {
+      // Сохраняем путь и параметры
+      const pathWithQuery = urlObj.pathname + urlObj.search + urlObj.hash;
+      const correctUrl = new URL(pathWithQuery, supabaseUrl);
+      console.log('Fixed URL (URL object):', url, '->', correctUrl.toString());
+      return correctUrl.toString();
+    }
+    
+    // Если URL уже правильный, возвращаем как есть
+    return url;
+  } catch (error) {
+    // Если URL невалидный, пытаемся исправить простой заменой
+    if (url.includes('kong')) {
+      let fixed = url
+        .replace(/https?:\/\/kong:8000/g, supabaseUrl)
+        .replace(/https?:\/\/kong\//g, `${supabaseUrl}/`)
+        .replace(/https?:\/\/kong/g, supabaseUrl)
+        .replace(/kong:8000/g, supabaseUrl.replace(/^https?:\/\//, ''))
+        .replace(/\/\/kong\//g, `//${supabaseUrl.replace(/^https?:\/\//, '')}/`)
+        .replace(/\/\/kong/g, `//${supabaseUrl.replace(/^https?:\/\//, '')}`);
+      
+      // Если после замены все еще есть kong, пытаемся извлечь путь
+      if (fixed.includes('kong')) {
+        const match = fixed.match(/(https?:\/\/)?kong(:8000)?(\/.*)/);
+        if (match) {
+          const path = match[3] || '';
+          fixed = `${supabaseUrl}${path}`;
+        }
+      }
+      
+      console.log('Fixed URL (error fallback):', url, '->', fixed);
+      return fixed;
+    }
+    
+    // Если не удалось исправить, возвращаем оригинал
+    console.warn('Could not fix URL:', url, error);
+    return url;
   }
 }
 
 /**
- * Get thumbnail URL for an image (if thumbnails are supported)
+ * Исправляет URL для изображений, видео и аудио файлов
+ * @param url - URL для исправления
+ * @returns Исправленный URL
  */
-export function getThumbnailUrl(url: string, width: number = 200, height: number = 200): string {
-  const fixed = fixMediaUrl(url);
-  
-  // For Supabase storage, we can add transformation params (if supported)
-  // This is a placeholder - implement based on your storage setup
-  if (fixed.includes('/storage/v1/object/public/')) {
-    return `${fixed}?width=${width}&height=${height}&resize=contain`;
-  }
-  
-  return fixed;
+export function fixMediaUrl(url: string | null | undefined): string {
+  return fixFileUrl(url);
 }
+

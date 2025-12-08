@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
+import { Room, Message, roomsAPI, messagesAPI } from '../../utils/api';
+import { useAuth } from '../../contexts/AuthContext';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
-import { ScrollArea } from '../ui/scroll-area';
-import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
-import { Checkbox } from '../ui/checkbox';
-import { roomsAPI, dmAPI, Message, Room, DirectMessage } from '../../utils/api';
-import { useAuth } from '../../contexts/AuthContext';
-import { fixMediaUrl } from '../../utils/urlFix';
+import { Card, CardContent } from '../ui/card';
+import { Badge } from '../ui/badge';
 import { toast } from '../ui/sonner';
-import { Search, Send } from '../ui/icons';
+import { Search, ArrowRight, Check } from '../ui/icons';
+import { useSessionCrypto } from '../../contexts/SessionCryptoContext';
+import { encryptMessageContent, decryptMessageContent } from '../../utils/messageEncryption';
 
 interface ForwardMessagesDialogProps {
   open: boolean;
@@ -25,238 +25,255 @@ export function ForwardMessagesDialog({
   onForwardComplete 
 }: ForwardMessagesDialogProps) {
   const { user } = useAuth();
+  const sessionCrypto = useSessionCrypto();
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [dms, setDms] = useState<DirectMessage[]>([]);
-  const [selectedTargets, setSelectedTargets] = useState<Set<string>>(new Set());
+  const [selectedRooms, setSelectedRooms] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
-  const [isForwarding, setIsForwarding] = useState(false);
-  const [activeTab, setActiveTab] = useState<'rooms' | 'dms'>('rooms');
+  const [loading, setLoading] = useState(false);
+  const [forwarding, setForwarding] = useState(false);
+  const [decryptedPreviews, setDecryptedPreviews] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (open) {
-      loadRoomsAndDMs();
+      loadRooms();
     }
   }, [open]);
 
-  const loadRoomsAndDMs = async () => {
-    try {
-      const [roomsData, dmsData] = await Promise.all([
-        roomsAPI.getUserRooms(),
-        dmAPI.getAll()
-      ]);
-      setRooms(roomsData || []);
-      setDms(dmsData || []);
-    } catch (error) {
-      console.error('Failed to load rooms and DMs:', error);
-      toast.error('Failed to load chats');
-    }
-  };
-
-  const toggleTarget = (targetId: string) => {
-    const newTargets = new Set(selectedTargets);
-    if (newTargets.has(targetId)) {
-      newTargets.delete(targetId);
-    } else {
-      newTargets.add(targetId);
-    }
-    setSelectedTargets(newTargets);
-  };
-
-  const handleForward = async () => {
-    if (selectedTargets.size === 0) {
-      toast.error('Please select at least one chat');
+  // Расшифровка превью сообщений
+  useEffect(() => {
+    if (!sessionCrypto.isReady || rooms.length === 0) {
       return;
     }
 
-    setIsForwarding(true);
+    const decryptPreviews = async () => {
+      const previewMap = new Map<string, string>();
+      
+      for (const room of rooms) {
+        if (room.last_message && room.last_message.content) {
+          try {
+            const originalContent = room.last_message.content;
+            
+            // Проверяем, является ли контент зашифрованным
+            let isEncrypted = false;
+            try {
+              const parsed = JSON.parse(originalContent);
+              isEncrypted = parsed && parsed.version && parsed.ciphertext;
+            } catch {
+              // Не JSON, значит незашифрованное сообщение
+              isEncrypted = false;
+            }
+
+            // Если не зашифровано, используем как есть
+            if (!isEncrypted) {
+              previewMap.set(room.id, originalContent);
+              continue;
+            }
+
+            // Если зашифровано, пытаемся расшифровать
+            try {
+              const decrypted = await decryptMessageContent(originalContent, sessionCrypto);
+              previewMap.set(room.id, decrypted);
+            } catch (error) {
+              // Если не удалось расшифровать, показываем оригинал
+              previewMap.set(room.id, originalContent);
+            }
+          } catch (error) {
+            // В случае ошибки используем оригинальный контент
+            previewMap.set(room.id, room.last_message.content);
+          }
+        }
+      }
+      
+      setDecryptedPreviews(previewMap);
+    };
+
+    decryptPreviews();
+  }, [rooms, sessionCrypto, sessionCrypto.sessionKey, sessionCrypto.isReady]);
+
+  const loadRooms = async () => {
+    try {
+      setLoading(true);
+      const data = await roomsAPI.getAll();
+      // Фильтруем комнаты: показываем только те, в которые можно переслать
+      // Исключаем комнаты "Избранное" и системные комнаты
+      const availableRooms = data.rooms.filter((room: Room) => 
+        !room.is_favorites && 
+        !room.deleted &&
+        room.name !== '🔒 Азкабан' &&
+        (room.type === 'public' || room.members.includes(user?.id || ''))
+      );
+      setRooms(availableRooms);
+    } catch (error: any) {
+      console.error('Ошибка загрузки комнат:', error);
+      toast.error('Не удалось загрузить список чатов');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleRoomSelection = (roomId: string) => {
+    const newSelection = new Set(selectedRooms);
+    if (newSelection.has(roomId)) {
+      newSelection.delete(roomId);
+    } else {
+      newSelection.add(roomId);
+    }
+    setSelectedRooms(newSelection);
+  };
+
+  const handleForward = async () => {
+    if (selectedRooms.size === 0) {
+      toast.error('Выберите хотя бы один чат');
+      return;
+    }
+
+    if (messages.length === 0) {
+      toast.error('Нет сообщений для пересылки');
+      return;
+    }
 
     try {
-      const forwardPromises: Promise<any>[] = [];
-
-      for (const targetId of selectedTargets) {
+      setForwarding(true);
+      
+      // Пересылаем каждое сообщение в каждый выбранный чат
+      for (const roomId of selectedRooms) {
         for (const message of messages) {
-          // Determine if target is a room or DM based on the tab
-          const isRoom = activeTab === 'rooms' || rooms.some(r => r.id === targetId);
-          
-          if (isRoom) {
-            // Forward to room
-            const forwardContent = `[Forwarded]\n${message.content}`;
-            forwardPromises.push(
-              roomsAPI.sendMessage(targetId, forwardContent, message.type)
+          try {
+            // Расшифровываем сообщение для пересылки
+            let content = message.content;
+            if (message.type === 'text' || message.type === 'poll') {
+              try {
+                content = await decryptMessageContent(message.content, sessionCrypto, message);
+                // Шифруем заново для нового чата
+                content = await encryptMessageContent(content, sessionCrypto);
+              } catch (error) {
+                console.error('Ошибка расшифровки/шифрования при пересылке:', error);
+                // Если не удалось расшифровать, отправляем как есть (может быть незашифрованное)
+              }
+            }
+            
+            // Для медиа-файлов используем оригинальный URL
+            if (message.type === 'video' || message.type === 'voice' || message.type === 'audio') {
+              content = message.content;
+            }
+
+            // Отправляем сообщение в новый чат
+            await messagesAPI.send(
+              roomId,
+              content,
+              message.type,
+              undefined
             );
-          } else {
-            // Forward to DM
-            const forwardContent = `[Forwarded]\n${message.content}`;
-            forwardPromises.push(
-              dmAPI.sendMessage(targetId, forwardContent, message.type)
-            );
+          } catch (error: any) {
+            console.error(`Ошибка пересылки сообщения ${message.id} в комнату ${roomId}:`, error);
           }
         }
       }
 
-      await Promise.all(forwardPromises);
-
-      toast.success(`Forwarded ${messages.length} message(s) to ${selectedTargets.size} chat(s)`);
-      onForwardComplete?.();
+      toast.success(`Сообщения пересланы в ${selectedRooms.size} ${selectedRooms.size === 1 ? 'чат' : 'чата'}`);
+      setSelectedRooms(new Set());
+      setSearchQuery('');
       onOpenChange(false);
-    } catch (error) {
-      console.error('Failed to forward messages:', error);
-      toast.error('Failed to forward messages');
+      if (onForwardComplete) {
+        onForwardComplete();
+      }
+    } catch (error: any) {
+      console.error('Ошибка пересылки:', error);
+      toast.error('Не удалось переслать сообщения');
     } finally {
-      setIsForwarding(false);
+      setForwarding(false);
     }
   };
 
-  const filteredRooms = rooms.filter(room =>
+  const filteredRooms = rooms.filter((room) =>
     room.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const filteredDMs = dms.filter(dm =>
-    dm.other_user?.display_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    dm.other_user?.username?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>
-            Forward {messages.length} message{messages.length > 1 ? 's' : ''}
+            Переслать {messages.length} {messages.length === 1 ? 'сообщение' : 'сообщений'}
           </DialogTitle>
         </DialogHeader>
-
-        <div className="space-y-4">
-          {/* Tabs */}
-          <div className="flex gap-2 border-b">
-            <button
-              onClick={() => setActiveTab('rooms')}
-              className={`px-4 py-2 font-medium transition-colors ${
-                activeTab === 'rooms'
-                  ? 'border-b-2 border-primary text-primary'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Rooms ({rooms.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('dms')}
-              className={`px-4 py-2 font-medium transition-colors ${
-                activeTab === 'dms'
-                  ? 'border-b-2 border-primary text-primary'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              Direct Messages ({dms.length})
-            </button>
-          </div>
-
-          {/* Search */}
+        
+        <div className="flex-1 overflow-hidden flex flex-col space-y-4">
+          {/* Поиск */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Search chats..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9"
+              placeholder="Поиск чатов..."
+              className="pl-10"
             />
           </div>
 
-          {/* List */}
-          <ScrollArea className="h-[300px] border rounded-md">
-            <div className="p-2 space-y-1">
-              {activeTab === 'rooms' ? (
-                filteredRooms.length > 0 ? (
-                  filteredRooms.map(room => (
-                    <div
-                      key={room.id}
-                      className="flex items-center gap-3 p-3 rounded-lg hover:bg-accent cursor-pointer transition-colors"
-                      onClick={() => toggleTarget(room.id)}
-                    >
-                      <Checkbox
-                        checked={selectedTargets.has(room.id)}
-                        onCheckedChange={() => toggleTarget(room.id)}
-                      />
-                      <Avatar className="h-10 w-10">
-                        <AvatarImage src={fixMediaUrl(room.avatar)} />
-                        <AvatarFallback>{room.name[0]?.toUpperCase()}</AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{room.name}</p>
-                        <p className="text-sm text-muted-foreground truncate">
-                          {room.description || 'No description'}
-                        </p>
+          {/* Список чатов */}
+          <div className="flex-1 overflow-y-auto space-y-2">
+            {loading ? (
+              <div className="text-center py-8 text-muted-foreground">Загрузка...</div>
+            ) : filteredRooms.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                {searchQuery ? 'Чаты не найдены' : 'Нет доступных чатов'}
+              </div>
+            ) : (
+              filteredRooms.map((room) => (
+                <Card
+                  key={room.id}
+                  className={`cursor-pointer transition-all hover:bg-accent ${
+                    selectedRooms.has(room.id) ? 'ring-2 ring-primary' : ''
+                  }`}
+                  onClick={() => toggleRoomSelection(room.id)}
+                >
+                  <CardContent className="p-4 flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold">{room.name}</h3>
+                        <Badge variant="secondary" className="text-xs">
+                          {room.type === 'public' ? 'Публичный' : 'Приватный'}
+                        </Badge>
                       </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    No rooms found
-                  </div>
-                )
-              ) : (
-                filteredDMs.length > 0 ? (
-                  filteredDMs.map(dm => (
-                    <div
-                      key={dm.id}
-                      className="flex items-center gap-3 p-3 rounded-lg hover:bg-accent cursor-pointer transition-colors"
-                      onClick={() => toggleTarget(dm.id)}
-                    >
-                      <Checkbox
-                        checked={selectedTargets.has(dm.id)}
-                        onCheckedChange={() => toggleTarget(dm.id)}
-                      />
-                      <Avatar className="h-10 w-10">
-                        <AvatarImage src={fixMediaUrl(dm.other_user?.avatar)} />
-                        <AvatarFallback>
-                          {dm.other_user?.display_name?.[0]?.toUpperCase() || 
-                           dm.other_user?.username?.[0]?.toUpperCase() || '?'}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">
-                          {dm.other_user?.display_name || dm.other_user?.username}
+                      {room.last_message && (
+                        <p className="text-sm text-muted-foreground mt-1 line-clamp-1">
+                          {room.last_message.sender_username}: {(
+                            decryptedPreviews.get(room.id) || room.last_message.content
+                          ).substring(0, 50)}
                         </p>
-                        {dm.other_user?.status && (
-                          <p className="text-sm text-muted-foreground truncate">
-                            {dm.other_user.status}
-                          </p>
-                        )}
-                      </div>
+                      )}
                     </div>
-                  ))
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    No direct messages found
-                  </div>
-                )
-              )}
-            </div>
-          </ScrollArea>
+                    {selectedRooms.has(room.id) && (
+                      <Check className="w-5 h-5 text-primary" />
+                    )}
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </div>
 
-          {/* Selected count */}
-          {selectedTargets.size > 0 && (
-            <p className="text-sm text-muted-foreground">
-              {selectedTargets.size} chat{selectedTargets.size > 1 ? 's' : ''} selected
-            </p>
-          )}
+          {/* Кнопки */}
+          <div className="flex justify-end gap-2 pt-4 border-t">
+            <Button
+              variant="outline"
+              onClick={() => {
+                onOpenChange(false);
+                setSelectedRooms(new Set());
+                setSearchQuery('');
+              }}
+              disabled={forwarding}
+            >
+              Отмена
+            </Button>
+            <Button
+              onClick={handleForward}
+              disabled={selectedRooms.size === 0 || forwarding}
+            >
+              <ArrowRight className="w-4 h-4 mr-2" />
+              Переслать в {selectedRooms.size} {selectedRooms.size === 1 ? 'чат' : 'чата'}
+            </Button>
+          </div>
         </div>
-
-        <DialogFooter>
-          <Button
-            variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={isForwarding}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleForward}
-            disabled={selectedTargets.size === 0 || isForwarding}
-          >
-            <Send className="h-4 w-4 mr-2" />
-            {isForwarding ? 'Forwarding...' : 'Forward'}
-          </Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

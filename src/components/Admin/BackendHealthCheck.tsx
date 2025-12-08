@@ -10,7 +10,7 @@ export function BackendHealthCheck() {
     setStatus('checking');
     setError(null);
 
-    const healthUrl = `${supabaseUrl}/functions/v1/make-server-b0f1e6d5/health`;
+    const healthUrl = `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/make-server-b0f1e6d5/health`;
     
     try {
       console.log('BackendHealthCheck: Testing connection to:', healthUrl);

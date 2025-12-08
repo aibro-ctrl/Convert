@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Message, storageAPI } from '../../utils/api';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
-import { X, Send, Mic, Video, BarChart3, Circle, Square, Paperclip, Camera, SwitchCamera, Image as ImageIcon, Smile, Mail } from '../ui/icons';
+import { X, Send, Mic, Video, BarChart3, Circle, Square, Paperclip, Camera, SwitchCamera, Image as ImageIcon, Smile } from '../ui/icons';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -1063,18 +1063,22 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
             </div>
           </div>
           <div className="flex gap-2">
-            <button
+            <Button 
+              variant="ghost" 
+              size="sm" 
               onClick={cancelAudioRecording}
-              className="h-9 w-9 rounded-full hover:bg-destructive/10 active:bg-destructive/20 text-destructive transition-all duration-200 inline-flex items-center justify-center"
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
             >
-              <X className="w-5 h-5" />
-            </button>
-            <button
+              <X className="w-4 h-4" />
+            </Button>
+            <Button 
+              variant="default" 
+              size="sm" 
               onClick={stopAudioRecording}
-              className="h-9 w-9 rounded-full bg-primary hover:bg-primary/90 active:scale-95 shadow-lg hover:shadow-primary/50 transition-all duration-200 inline-flex items-center justify-center ring-2 ring-primary/20"
+              className="bg-primary hover:bg-primary/90"
             >
-              <Mail className="w-4 h-4 text-primary-foreground" />
-            </button>
+              <Send className="w-4 h-4" />
+            </Button>
           </div>
         </div>
       )}
@@ -1212,11 +1216,11 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
             {content.trim() ? (
               <button
                 type="button"
-                onClick={handleSend}
+          onClick={handleSend}
                 disabled={disabled || isRecordingAudio}
-                className="shrink-0 h-10 w-10 rounded-full bg-primary hover:bg-primary/90 active:scale-95 shadow-lg hover:shadow-primary/50 transition-all duration-200 inline-flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none ring-2 ring-primary/20"
+                className="shrink-0 h-10 w-10 rounded-full bg-gradient-to-br from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 active:scale-95 shadow-lg hover:shadow-xl transition-all duration-200 inline-flex items-center justify-center disabled:opacity-50 disabled:pointer-events-none"
               >
-                <Mail className="w-5 h-5 text-primary-foreground" />
+                <Send className="w-5 h-5 text-primary-foreground" />
               </button>
             ) : (
               <button
@@ -1254,17 +1258,14 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
           className="fixed z-[100]"
           style={computeMenuPosition()}
         >
-          <div className="relative bg-background/80 backdrop-blur-2xl border border-border/50 shadow-2xl rounded-2xl p-2 flex flex-col gap-1 animate-context-menu-pop overflow-hidden">
-            {/* Эффект стекла - дополнительный слой */}
-            <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent pointer-events-none" />
-            
+          <div className="bg-background/98 backdrop-blur-xl border-2 border-primary/30 shadow-2xl rounded-2xl p-2 flex flex-col gap-1 animate-context-menu-pop">
             <button
               onClick={() => {
                 console.log('Camera button clicked');
                 setShowAttachMenu(false);
                 handleFileSelect('camera');
               }}
-              className="relative flex items-center gap-3 px-4 py-3 hover:bg-primary/10 rounded-xl transition-all duration-200 text-left group"
+              className="flex items-center gap-3 px-4 py-3 hover:bg-primary/10 rounded-xl transition-all duration-200 text-left group"
             >
               <div className="w-9 h-9 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors">
                 <Camera className="w-5 h-5 text-primary" />
@@ -1277,7 +1278,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
                 setShowAttachMenu(false);
                 handleFileSelect('file');
               }}
-              className="relative flex items-center gap-3 px-4 py-3 hover:bg-primary/10 rounded-xl transition-all duration-200 text-left group"
+              className="flex items-center gap-3 px-4 py-3 hover:bg-primary/10 rounded-xl transition-all duration-200 text-left group"
             >
               <div className="w-9 h-9 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors">
                 <Paperclip className="w-5 h-5 text-primary" />
@@ -1298,17 +1299,14 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
           className="fixed z-[100]"
           style={computeMenuPosition()}
         >
-          <div className="relative bg-background/80 backdrop-blur-2xl border border-border/50 shadow-2xl rounded-2xl p-2 flex flex-col gap-1 animate-context-menu-pop overflow-hidden">
-            {/* Эффект стекла - дополнительный слой */}
-            <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent pointer-events-none" />
-            
+          <div className="bg-background/98 backdrop-blur-xl border-2 border-primary/30 shadow-2xl rounded-2xl p-2 flex flex-col gap-1 animate-context-menu-pop">
             <button
               onClick={() => {
                 console.log('Video button clicked');
                 setShowAdvancedAttachMenu(false);
                 startVideoRecording();
               }}
-              className="relative flex items-center gap-3 px-4 py-3 hover:bg-primary/10 rounded-xl transition-all duration-200 text-left group"
+              className="flex items-center gap-3 px-4 py-3 hover:bg-primary/10 rounded-xl transition-all duration-200 text-left group"
             >
               <div className="w-9 h-9 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors">
                 <Video className="w-5 h-5 text-primary" />
@@ -1321,7 +1319,7 @@ export function MessageInput({ onSend, replyingTo, onCancelReply, disabled, edit
                 setShowAdvancedAttachMenu(false);
                 setShowPollDialog(true);
               }}
-              className="relative flex items-center gap-3 px-4 py-3 hover:bg-primary/10 rounded-xl transition-all duration-200 text-left group"
+              className="flex items-center gap-3 px-4 py-3 hover:bg-primary/10 rounded-xl transition-all duration-200 text-left group"
             >
               <div className="w-9 h-9 rounded-full bg-primary/10 group-hover:bg-primary/20 flex items-center justify-center transition-colors">
                 <BarChart3 className="w-5 h-5 text-primary" />

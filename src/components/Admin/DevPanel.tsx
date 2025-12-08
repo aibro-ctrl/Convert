@@ -35,7 +35,7 @@ export function DevPanel() {
     try {
       console.log('Checking server health...');
       const response = await fetch(
-        `${supabaseUrl}/functions/v1/make-server-b0f1e6d5/health`,
+        `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/make-server-b0f1e6d5/health`,
         {
           headers: {
             'Authorization': `Bearer ${publicAnonKey}`,
@@ -71,7 +71,7 @@ export function DevPanel() {
     try {
       const token = localStorage.getItem('access_token');
       const response = await fetch(
-        `${supabaseUrl}/functions/v1/make-server-b0f1e6d5/auth/list-users`,
+        `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/make-server-b0f1e6d5/auth/list-users`,
         {
           headers: {
             'Authorization': `Bearer ${token || publicAnonKey}`,
@@ -103,7 +103,7 @@ export function DevPanel() {
     try {
       console.log('Creating test user...');
       const response = await fetch(
-        `${supabaseUrl}/functions/v1/make-server-b0f1e6d5/auth/signup`,
+        `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/make-server-b0f1e6d5/auth/signup`,
         {
           method: 'POST',
           headers: {
@@ -170,7 +170,7 @@ export function DevPanel() {
 
     try {
       const response = await fetch(
-        `${supabaseUrl}/functions/v1/make-server-b0f1e6d5/auth/delete-user/${encodeURIComponent(targetEmail)}`,
+        `${supabaseUrl.replace(/\/+$/, '')}/functions/v1/make-server-b0f1e6d5/auth/delete-user/${encodeURIComponent(targetEmail)}`,
         {
           method: 'DELETE',
           headers: {
